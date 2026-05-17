@@ -28,6 +28,7 @@ export function activate(context: vscode.ExtensionContext): void {
     log: true,
   });
   outputChannel.info("[activate] extension activated");
+  vscode.commands.executeCommand("setContext", "gotest.active", true);
 
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) {
