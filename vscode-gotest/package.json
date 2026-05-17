@@ -54,7 +54,11 @@
       },
       {
         "command": "gotest.showSpecView",
-        "title": "Go Test: Show Spec View"
+        "title": "Go Test: Show Spec View",
+        "icon": {
+          "light": "static/spec-icon.svg",
+          "dark": "static/spec-icon.svg"
+        }
       },
       {
         "command": "gotest.startWatch",
@@ -84,6 +88,13 @@
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "gotest.showSpecView",
+          "when": "gotest.active",
+          "group": "navigation"
+        }
+      ],
       "view/title": [
         {
           "command": "gotest.copyCoverage",
