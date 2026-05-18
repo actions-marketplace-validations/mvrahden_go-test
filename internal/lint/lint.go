@@ -1,16 +1,36 @@
 package lint
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
 	"golang.org/x/tools/go/ast/inspector"
 )
+
+// Rule identifies a specific lint check.
+type Rule string
+
+const (
+	Focus         Rule = "focus"
+	Receiver      Rule = "receiver"
+	LifecycleTypo Rule = "lifecycle-typo"
+	LifecyclePair Rule = "lifecycle-pair"
+	GeneratedFile Rule = "generated-file"
+	StdlibTest    Rule = "stdlib-test"
+	Testify       Rule = "testify"
+)
+
+var cfg struct {
+	skipStdlibTest bool
+	skipTestify    bool
+}
 
 var Analyzer = &analysis.Analyzer{
 	Name:     "gotestlint",
@@ -19,23 +39,36 @@ var Analyzer = &analysis.Analyzer{
 	Run:      run,
 }
 
+func init() {
+	Analyzer.Flags.BoolVar(&cfg.skipStdlibTest, "skip-stdlib-test", false, "disable stdlib test function detection")
+	Analyzer.Flags.BoolVar(&cfg.skipTestify, "skip-testify", false, "disable testify import detection")
+}
+
 var lifecycleHooks = []string{"BeforeAll", "AfterAll", "BeforeEach", "AfterEach"}
 
 func run(pass *analysis.Pass) (any, error) {
 	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 
 	suites := discoverSuites(insp)
-	if len(suites) == 0 {
-		checkOrphanedFiles(pass)
-		return nil, nil
+	if len(suites) > 0 {
+		checkFocusPrefixes(pass, suites)
+		checkMethods(pass, insp, suites)
+		checkLifecyclePairs(pass, suites)
 	}
 
-	checkFocusPrefixes(pass, suites)
-	checkMethods(pass, insp, suites)
-	checkLifecyclePairs(pass, suites)
 	checkOrphanedFiles(pass)
+	checkStdlibTests(pass, insp)
+	checkTestifyImports(pass)
 
 	return nil, nil
+}
+
+func report(pass *analysis.Pass, rule Rule, pos token.Pos, format string, args ...any) {
+	pass.Report(analysis.Diagnostic{
+		Pos:      pos,
+		Category: string(rule),
+		Message:  fmt.Sprintf(format, args...),
+	})
 }
 
 type suiteInfo struct {
@@ -75,7 +108,7 @@ func discoverSuites(insp *inspector.Inspector) map[string]*suiteInfo {
 func checkFocusPrefixes(pass *analysis.Pass, suites map[string]*suiteInfo) {
 	for name, s := range suites {
 		if strings.HasPrefix(name, "F_") {
-			pass.Reportf(s.pos, "focused suite %s should not be committed", name)
+			report(pass, Focus, s.pos, "focused suite %s should not be committed", name)
 		}
 	}
 }
@@ -97,13 +130,13 @@ func checkMethods(pass *analysis.Pass, insp *inspector.Inspector, suites map[str
 		suite.methods[methodName] = fd.Pos()
 
 		if !isPointerReceiver(fd.Recv) {
-			pass.Reportf(fd.Pos(), "suite method %s.%s should use a pointer receiver", recvName, methodName)
+			report(pass, Receiver, fd.Pos(), "suite method %s.%s should use a pointer receiver", recvName, methodName)
 		}
 
 		stripped := strings.TrimPrefix(strings.TrimPrefix(methodName, "F_"), "X_")
 		if strings.HasPrefix(stripped, "Test") {
 			if strings.HasPrefix(methodName, "F_") {
-				pass.Reportf(fd.Pos(), "focused method %s.%s should not be committed", recvName, methodName)
+				report(pass, Focus, fd.Pos(), "focused method %s.%s should not be committed", recvName, methodName)
 			}
 			return
 		}
@@ -114,7 +147,7 @@ func checkMethods(pass *analysis.Pass, insp *inspector.Inspector, suites map[str
 
 		for _, hook := range lifecycleHooks {
 			if levenshtein(stripped, hook) <= 2 {
-				pass.Reportf(fd.Pos(), "method %s on suite %s is similar to lifecycle hook %s", methodName, recvName, hook)
+				report(pass, LifecycleTypo, fd.Pos(), "method %s on suite %s is similar to lifecycle hook %s", methodName, recvName, hook)
 				return
 			}
 		}
@@ -126,7 +159,7 @@ func checkLifecyclePairs(pass *analysis.Pass, suites map[string]*suiteInfo) {
 		_, hasBeforeAll := s.methods["BeforeAll"]
 		_, hasAfterAll := s.methods["AfterAll"]
 		if hasBeforeAll && !hasAfterAll {
-			pass.Reportf(s.pos, "suite %s has BeforeAll but no AfterAll — resources may leak", s.name)
+			report(pass, LifecyclePair, s.pos, "suite %s has BeforeAll but no AfterAll — resources may leak", s.name)
 		}
 	}
 }
@@ -135,9 +168,77 @@ func checkOrphanedFiles(pass *analysis.Pass) {
 	for _, file := range pass.Files {
 		name := filepath.Base(pass.Fset.File(file.Pos()).Name())
 		if strings.HasPrefix(name, "ƒƒ_") && strings.HasSuffix(name, "_test.go") {
-			pass.Reportf(file.Pos(), "generated file %s should not be checked into version control", name)
+			report(pass, GeneratedFile, file.Pos(), "generated file %s should not be checked into version control", name)
 		}
 	}
+}
+
+func checkStdlibTests(pass *analysis.Pass, insp *inspector.Inspector) {
+	if cfg.skipStdlibTest {
+		return
+	}
+
+	insp.Preorder([]ast.Node{(*ast.FuncDecl)(nil)}, func(n ast.Node) {
+		fd := n.(*ast.FuncDecl)
+		if fd.Recv != nil {
+			return
+		}
+		name := fd.Name.Name
+		if !strings.HasPrefix(name, "Test") {
+			return
+		}
+		if len(name) > 4 && unicode.IsLower(rune(name[4])) {
+			return
+		}
+		if isGeneratedFile(pass, fd.Pos()) {
+			return
+		}
+		if fd.Type.Params == nil || len(fd.Type.Params.List) != 1 {
+			return
+		}
+		if !isTestingT(fd.Type.Params.List[0].Type) {
+			return
+		}
+		report(pass, StdlibTest, fd.Pos(), "stdlib test %s — consider using a gotest suite", name)
+	})
+}
+
+func checkTestifyImports(pass *analysis.Pass) {
+	if cfg.skipTestify {
+		return
+	}
+
+	for _, file := range pass.Files {
+		if isGeneratedFile(pass, file.Pos()) {
+			continue
+		}
+		for _, imp := range file.Imports {
+			path := strings.Trim(imp.Path.Value, `"`)
+			if strings.HasPrefix(path, "github.com/stretchr/testify/") {
+				report(pass, Testify, imp.Pos(), "testify import %s — consider migrating to gotest", path)
+			}
+		}
+	}
+}
+
+func isGeneratedFile(pass *analysis.Pass, pos token.Pos) bool {
+	return strings.HasPrefix(filepath.Base(pass.Fset.Position(pos).Filename), "ƒƒ_")
+}
+
+func isTestingT(expr ast.Expr) bool {
+	star, ok := expr.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	return ident.Name == "testing" && sel.Sel.Name == "T"
 }
 
 func receiverTypeName(recv *ast.FieldList) string {
