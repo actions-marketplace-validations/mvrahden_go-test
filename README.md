@@ -10,7 +10,6 @@
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Go tests that write themselves, organize themselves, and explain themselves.
 Specification-driven test suites for AI-assisted Go development.
 
 `gotest` closes the gap between `func TestX(t *testing.T)` and a well-organized test suite through code generation.
