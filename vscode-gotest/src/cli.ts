@@ -1,36 +1,21 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import * as os from "node:os";
-import {
-  readFile,
-  readdir,
-  stat,
-  access,
-  mkdir,
-  constants,
-} from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import {
-  resolveGoBinary,
-  findInstalledGotest,
-  fileExists,
-  clearGoBinaryCache,
-} from "./goBinary.js";
+import { resolveGoBinary, fileExists, clearGoBinaryCache } from "./goBinary.js";
 
 export { resolveGoBinary } from "./goBinary.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MODULE_PATH = "github.com/mvrahden/go-test/cmd/gotest";
-const MIN_CLI_VERSION = "v1.3.0";
+const MIN_CLI_VERSION = "v1.13.0";
 
 export interface CliCommand {
   bin: string;
   args: string[];
 }
 
-const replaceBinaryCache = new Map<string, { hash: string; binPath: string }>();
 let versionWarningShown = false;
 
 export async function validateGoBinary(
@@ -64,54 +49,35 @@ export async function buildCliCommand(
     subcommandArgs = [...subcommandArgs, `-tags=${buildTags}`];
   }
 
-  // 1. Explicit cliPath override (highest priority)
+  const modulePath = config.get<string>("modulePath") ?? DEFAULT_MODULE_PATH;
+  const effectiveDir =
+    workspaceDir ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  // 1. Explicit cliPath override — only trusted when user-provided and version-valid
   const cliPath = config.get<string>("cliPath", "").trim();
   if (cliPath) {
     const resolved = resolveCliPath(cliPath, workspaceDir);
     if (await fileExists(resolved)) {
-      log?.debug(`[cli] cliPath override: ${resolved}`);
-      return { bin: resolved, args: subcommandArgs };
-    }
-    log?.debug(`[cli] cliPath "${resolved}" not found, probing alternatives`);
-  }
-
-  // 2. Project-pinned version from go.mod
-  const modulePath = config.get<string>("modulePath") ?? DEFAULT_MODULE_PATH;
-  const effectiveDir =
-    workspaceDir ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (effectiveDir && !modulePath.includes("@")) {
-    const version = await extractVersionFromGoMod(effectiveDir, modulePath);
-    if (version !== "latest") {
-      if (compareVersions(version, MIN_CLI_VERSION) >= 0) {
-        const goBin = await resolveGoBinary(log, workspaceDir);
-
-        if (await hasReplaceDirective(effectiveDir, modulePath)) {
-          const bin = await buildCachedBinary(
-            goBin,
-            effectiveDir,
-            modulePath,
-            log,
-          );
-          if (bin) {
-            log?.debug(`[cli] using go.mod (replace): ${bin}`);
-            return { bin, args: subcommandArgs };
-          }
-          log?.debug(`[cli] replace build failed, falling back to go run`);
-        }
-
-        const qualified = `${modulePath}@${version}`;
-        log?.debug(`[cli] using go.mod: ${goBin} run ${qualified}`);
-        return {
-          bin: goBin,
-          args: ["run", qualified, "--", ...subcommandArgs],
-        };
+      const version = await queryBinaryVersion(resolved, log);
+      if (version && compareVersions(version, MIN_CLI_VERSION) >= 0) {
+        log?.debug(`[cli] cliPath override: ${resolved} (${version})`);
+        return { bin: resolved, args: subcommandArgs };
       }
-      log?.warn(`[cli] go.mod pins ${version}, requires >= ${MIN_CLI_VERSION}`);
-      showVersionWarning(version, effectiveDir, log);
+      if (version) {
+        log?.warn(
+          `[cli] cliPath "${resolved}" is ${version}, requires >= ${MIN_CLI_VERSION} — falling back to go run`,
+        );
+      } else {
+        log?.warn(
+          `[cli] cliPath "${resolved}" failed version check — falling back to go run`,
+        );
+      }
+    } else {
+      log?.debug(`[cli] cliPath "${resolved}" not found, probing alternatives`);
     }
   }
 
-  // 2b. Workspace IS the gotest module (development / go.work overlap)
+  // 2. Workspace IS the gotest module (development / go.work overlap)
   if (effectiveDir) {
     const declaredModule = await readModuleDeclaration(effectiveDir);
     if (
@@ -120,23 +86,47 @@ export async function buildCliCommand(
         modulePath.startsWith(declaredModule + "/"))
     ) {
       const goBin = await resolveGoBinary(log, workspaceDir);
-      const bin = await buildCachedBinary(goBin, effectiveDir, modulePath, log);
-      if (bin) {
-        log?.debug(`[cli] using local module: ${bin}`);
-        return { bin, args: subcommandArgs };
-      }
-      log?.debug(`[cli] local module build failed, continuing`);
+      const relPath = "./" + modulePath.slice(declaredModule.length + 1);
+      log?.debug(`[cli] workspace is gotest module: ${goBin} run ${relPath}`);
+      return {
+        bin: goBin,
+        args: ["run", relPath, ...subcommandArgs],
+      };
     }
   }
 
-  // 3. Globally installed binary
-  const gotest = await findInstalledGotest(workspaceDir, log);
-  if (gotest) {
-    log?.debug(`[cli] using installed binary: ${gotest}`);
-    return { bin: gotest, args: subcommandArgs };
+  // 3–4. Project-pinned version from go.mod
+  if (effectiveDir && !modulePath.includes("@")) {
+    const version = await extractVersionFromGoMod(effectiveDir, modulePath);
+    if (version !== "latest") {
+      if (compareVersions(version, MIN_CLI_VERSION) >= 0) {
+        const goBin = await resolveGoBinary(log, workspaceDir);
+
+        // 3. Replace directive → go run without version (respects go.mod resolution)
+        if (await hasReplaceDirective(effectiveDir, modulePath)) {
+          log?.debug(
+            `[cli] go.mod has replace directive: ${goBin} run ${modulePath}`,
+          );
+          return {
+            bin: goBin,
+            args: ["run", modulePath, ...subcommandArgs],
+          };
+        }
+
+        // 4. Pinned version → go run module@version
+        const qualified = `${modulePath}@${version}`;
+        log?.debug(`[cli] using go.mod: ${goBin} run ${qualified}`);
+        return {
+          bin: goBin,
+          args: ["run", qualified, ...subcommandArgs],
+        };
+      }
+      log?.warn(`[cli] go.mod pins ${version}, requires >= ${MIN_CLI_VERSION}`);
+      showVersionWarning(version, effectiveDir, log);
+    }
   }
 
-  // 4. Fallback: go run @latest
+  // 5. Fallback: go run @latest
   const goBin = await resolveGoBinary(log, workspaceDir);
   const qualified = modulePath.includes("@")
     ? modulePath
@@ -208,6 +198,28 @@ function showVersionWarning(
     });
 }
 
+async function queryBinaryVersion(
+  binPath: string,
+  log?: vscode.LogOutputChannel,
+): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync(binPath, ["version"], {
+      timeout: 5_000,
+    });
+    const match = /^gotest\s+(v\S+)/m.exec(stdout);
+    if (match) {
+      return match[1];
+    }
+    log?.debug(
+      `[cli] unexpected version output from ${binPath}: ${stdout.trim()}`,
+    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log?.debug(`[cli] version check failed for ${binPath}: ${msg}`);
+  }
+  return undefined;
+}
+
 async function hasReplaceDirective(
   workspaceDir: string,
   modulePath: string,
@@ -231,136 +243,6 @@ async function hasReplaceDirective(
     // go.mod not found
   }
   return false;
-}
-
-async function collectGoFileMtimes(dir: string): Promise<number[]> {
-  const mtimes: number[] = [];
-  const entries = await readdir(dir, { withFileTypes: true, recursive: true });
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    if (!entry.name.endsWith(".go")) continue;
-    const rel = entry.parentPath ?? entry.path ?? "";
-    // skip vendor, testdata, hidden dirs
-    if (
-      rel.includes("/vendor/") ||
-      rel.includes("/testdata/") ||
-      /\/\./.test(rel)
-    )
-      continue;
-    const fullPath = path.join(rel, entry.name);
-    try {
-      const s = await stat(fullPath);
-      mtimes.push(s.mtimeMs);
-    } catch {
-      // skip unreadable files
-    }
-  }
-  return mtimes.sort();
-}
-
-function extractLocalReplacePath(
-  goModContent: string,
-  modulePath: string,
-): string | undefined {
-  let candidate = modulePath;
-  while (candidate) {
-    const pattern = new RegExp(
-      `^\\s*replace\\s+${escapeRegExp(candidate)}\\s+\\S*\\s*=>\\s*(\\S+)`,
-      "m",
-    );
-    const match = pattern.exec(goModContent);
-    if (match) {
-      const target = match[1];
-      if (target.startsWith(".") || target.startsWith("/")) {
-        return target;
-      }
-      return undefined; // remote replace, no local path
-    }
-    const lastSlash = candidate.lastIndexOf("/");
-    if (lastSlash <= 0) break;
-    candidate = candidate.substring(0, lastSlash);
-  }
-  return undefined;
-}
-
-async function buildCachedBinary(
-  goBin: string,
-  workspaceDir: string,
-  modulePath: string,
-  log?: vscode.LogOutputChannel,
-): Promise<string | undefined> {
-  const goModPath = path.join(workspaceDir, "go.mod");
-  let goModContent: string;
-  try {
-    goModContent = await readFile(goModPath, "utf-8");
-  } catch {
-    return undefined;
-  }
-
-  const h = createHash("sha256").update(goModContent).update(modulePath);
-  try {
-    const goSumContent = await readFile(
-      path.join(workspaceDir, "go.sum"),
-      "utf-8",
-    );
-    h.update(goSumContent);
-  } catch {
-    // go.sum may not exist
-  }
-
-  const localReplace = extractLocalReplacePath(goModContent, modulePath);
-  if (localReplace) {
-    const resolvedReplace = path.isAbsolute(localReplace)
-      ? localReplace
-      : path.resolve(workspaceDir, localReplace);
-    try {
-      const mtimes = await collectGoFileMtimes(resolvedReplace);
-      for (const mt of mtimes) {
-        h.update(String(mt));
-      }
-    } catch {
-      // if we can't read the replace dir, don't cache at all
-      h.update(String(Date.now()));
-    }
-  }
-
-  const hash = h.digest("hex").substring(0, 16);
-  const cached = replaceBinaryCache.get(workspaceDir);
-  if (cached?.hash === hash) {
-    try {
-      await access(cached.binPath, constants.X_OK);
-      return cached.binPath;
-    } catch {
-      // binary removed, rebuild
-    }
-  }
-
-  const cacheDir = path.join(os.tmpdir(), "gotest");
-  try {
-    await mkdir(cacheDir, { recursive: true });
-  } catch {
-    return undefined;
-  }
-
-  const dirHash = createHash("sha256")
-    .update(workspaceDir)
-    .digest("hex")
-    .substring(0, 12);
-  const binPath = path.join(cacheDir, `gotest-${dirHash}`);
-
-  try {
-    log?.debug(`[cli] building gotest from replace directive...`);
-    await execFileAsync(goBin, ["build", "-o", binPath, modulePath], {
-      cwd: workspaceDir,
-      timeout: 60_000,
-    });
-    replaceBinaryCache.set(workspaceDir, { hash, binPath });
-    return binPath;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log?.warn(`[cli] replace build error: ${msg}`);
-    return undefined;
-  }
 }
 
 async function extractVersionFromGoMod(
@@ -421,6 +303,5 @@ export function scopedConfig(
 
 export function clearBinaryCache(): void {
   clearGoBinaryCache();
-  replaceBinaryCache.clear();
   versionWarningShown = false;
 }

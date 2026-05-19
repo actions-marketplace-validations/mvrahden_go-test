@@ -24,7 +24,7 @@ import { copyCoverageSummary, copyTestResults } from "./reporting.js";
 let flushOnDeactivate: (() => Promise<void>) | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-  const outputChannel = vscode.window.createOutputChannel("gotest", {
+  const outputChannel = vscode.window.createOutputChannel("Go - Test Suites", {
     log: true,
   });
   outputChannel.info("[activate] extension activated");

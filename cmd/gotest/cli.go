@@ -14,13 +14,21 @@ import (
 )
 
 func main() {
+	args := os.Args[1:]
+
+	if containsHelpFlag(args) {
+		subcmd, _ := ParseSubcommand(args)
+		showHelp(subcmd)
+		return
+	}
+
 	projectCfg, err := config.Load(".")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: loading %s: %s\n", config.FileName, err)
 		os.Exit(2)
 	}
 
-	subcmd, remaining := ParseSubcommand(os.Args[1:])
+	subcmd, remaining := ParseSubcommand(args)
 	inv := Invocation{Args: remaining, Config: projectCfg}
 
 	switch subcmd {
@@ -48,10 +56,14 @@ func main() {
 		fmt.Println(about.LongInfo())
 		return
 	case "help":
-		printUsage()
+		topic := ""
+		if len(remaining) > 0 {
+			topic = remaining[0]
+		}
+		showHelp(topic)
 		return
 	default:
-		inv.Args = os.Args[1:]
+		inv.Args = args
 		os.Exit(runTest(inv))
 	}
 }
@@ -213,37 +225,3 @@ func stripJSONFlag(args []string) (bool, []string) {
 	return found, out
 }
 
-func printUsage() {
-	fmt.Fprintf(os.Stderr, `%s — test suite runner for Go
-
-Usage:
-  gotest [gotest-flags] [--] [go-test-flags] [packages...]
-  gotest <subcommand> [flags] [packages...]
-
-Subcommands:
-  discover    Discover test suites and output JSON metadata
-  prepare     Generate overlay and start shared fixtures for debug (blocks until SIGTERM)
-  generate    Run code generation only (no test execution)
-  clean       Remove orphaned generated files
-  spec        Render behavioral specification from test suites
-  watch       Watch for file changes and re-run tests
-  scaffold    Generate test suite skeleton from a type or file
-  migrate     Convert testify/suite tests to go-test format
-  refactor    Source code refactoring tools (toggle-focus)
-  lint        Run gotest-specific linter checks
-  version     Print version information
-  help        Show this help message
-
-Flags (gotest):
-  --ci                      Enable focus guard (fail on F_ prefixes)
-  --debug                   Keep generated overlay for inspection
-  --spec                    Append spec view after normal test output
-  --update-snapshots        Regenerate snapshot files
-  --min=<pct>               Fail if coverage below threshold (enables -coverprofile)
-  --setup-timeout=<dur>     Shared fixture setup deadline (default 1m)
-  --debounce=<dur>          Watch mode debounce interval (default 200ms)
-
-gotest flags use --double-dash; go test flags use -single-dash.
-Use a bare "--" to pass unrecognized flags to go test without validation.
-`, about.ShortInfo())
-}

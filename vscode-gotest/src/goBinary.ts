@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import * as os from "node:os";
 import { readFile, readdir, access, constants } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -8,11 +7,9 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const goBinaryCache = new Map<string, string>();
-let cachedGotestBinary: string | undefined;
 
 export function clearGoBinaryCache(): void {
   goBinaryCache.clear();
-  cachedGotestBinary = undefined;
 }
 
 export async function resolveGoBinary(
@@ -125,73 +122,6 @@ async function readGoVersionFromMod(
   } catch {
     return undefined;
   }
-}
-
-export async function findInstalledGotest(
-  workspaceDir?: string,
-  log?: vscode.LogOutputChannel,
-): Promise<string | undefined> {
-  if (cachedGotestBinary) {
-    if (await fileExists(cachedGotestBinary)) {
-      return cachedGotestBinary;
-    }
-    cachedGotestBinary = undefined;
-  }
-
-  const gobin = process.env.GOBIN;
-  if (gobin) {
-    const p = path.join(gobin, "gotest");
-    if (await fileExists(p)) {
-      cachedGotestBinary = p;
-      return p;
-    }
-  }
-
-  const gopath = process.env.GOPATH ?? path.join(process.env.HOME ?? "", "go");
-  const gopathBin = path.join(gopath, "bin", "gotest");
-  if (await fileExists(gopathBin)) {
-    cachedGotestBinary = gopathBin;
-    return gopathBin;
-  }
-
-  try {
-    const goBin = await resolveGoBinary(undefined, workspaceDir);
-    const { stdout } = await execFileAsync(goBin, ["env", "GOBIN"], {
-      cwd: workspaceDir,
-      timeout: 5_000,
-    });
-    const envGobin = stdout.trim();
-    if (envGobin) {
-      const p = path.join(envGobin, "gotest");
-      if (await fileExists(p)) {
-        cachedGotestBinary = p;
-        return p;
-      }
-    }
-
-    const { stdout: gpOut } = await execFileAsync(goBin, ["env", "GOPATH"], {
-      cwd: workspaceDir,
-      timeout: 5_000,
-    });
-    const envGopath = gpOut.trim();
-    if (envGopath) {
-      const p = path.join(envGopath, "bin", "gotest");
-      if (await fileExists(p)) {
-        cachedGotestBinary = p;
-        return p;
-      }
-    }
-  } catch {
-    log?.debug("[cli] failed to query go env for gotest location");
-  }
-
-  const whichGotest = await which("gotest");
-  if (whichGotest) {
-    cachedGotestBinary = whichGotest;
-    return whichGotest;
-  }
-
-  return undefined;
 }
 
 export async function fileExists(p: string): Promise<boolean> {
