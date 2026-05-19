@@ -313,9 +313,15 @@ ${SCRIPT}
   }
 
   private async runSpecFromInput(jsonInput: string): Promise<string> {
-    const cmd = await buildCliCommand(["spec", "--input=-", "--format=json"]);
+    const workspaceDir =
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const cmd = await buildCliCommand(
+      ["spec", "--input=-", "--format=json"],
+      workspaceDir,
+      this.outputChannel,
+    );
     return new Promise<string>((resolve, reject) => {
-      const child = spawn(cmd.bin, cmd.args);
+      const child = spawn(cmd.bin, cmd.args, { cwd: workspaceDir });
       let stdout = "";
       let stderr = "";
 
