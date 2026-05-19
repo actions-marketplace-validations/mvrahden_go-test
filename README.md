@@ -5,6 +5,8 @@
 </p>
 
 [![CI](https://github.com/mvrahden/go-test/actions/workflows/test.yml/badge.svg)](https://github.com/mvrahden/go-test/actions/workflows/test.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/mvrahden/go-test.svg)](https://pkg.go.dev/github.com/mvrahden/go-test)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mvrahden/go-test)](https://goreportcard.com/report/github.com/mvrahden/go-test)
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -246,7 +248,7 @@ InfraFixture.AfterEach
 
 Output nests naturally: `Test_InfraFixture/APIFixture/BatchTestSuite/TestDispatch`.
 
-For cross-package shared state (e.g. a database container shared across integration test packages), use `*SharedFixture` suffix — see [docs/fixtures.md](docs/fixtures.md) for the full reference.
+For cross-package shared state (e.g. a database container shared across integration test packages), use `*SharedFixture` suffix — see [docs/design/fixtures.md](docs/design/fixtures.md) for the full reference.
 
 ### Configuration
 
@@ -594,7 +596,7 @@ Also available as a standalone binary (`gotest-lint`) compatible with `golangci-
 
 ## VS Code Extension
 
-The **Go Test Suites** extension brings first-class IDE support: suite-aware Test Explorer, CodeLens run/debug buttons, coverage gutters, watch mode, spec view, focus/exclude quick fixes, and suite scaffolding.
+The **gotest** extension brings first-class IDE support: suite-aware Test Explorer, CodeLens run/debug buttons, coverage gutters, watch mode, spec view, focus/exclude quick fixes, and suite scaffolding.
 Available on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=mvrahden.gotest) and [Open VSX](https://open-vsx.org/extension/mvrahden/gotest).
 Install via `code --install-extension mvrahden.gotest`.
 

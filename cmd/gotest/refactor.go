@@ -7,7 +7,8 @@ import (
 	"github.com/mvrahden/go-test/internal/refactor"
 )
 
-func runRefactor(args []string) int {
+func runRefactor(inv Invocation) int {
+	args := inv.Args
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, `usage: gotest refactor <command> [args]
 

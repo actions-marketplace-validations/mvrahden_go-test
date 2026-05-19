@@ -9,9 +9,9 @@ import (
 	"github.com/mvrahden/go-test/internal/scaffold"
 )
 
-func runScaffold(args []string) int {
+func runScaffold(inv Invocation) int {
 	var target string
-	for _, arg := range args {
+	for _, arg := range inv.Args {
 		if !isFlag(arg) {
 			target = arg
 			break

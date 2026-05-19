@@ -1,5 +1,7 @@
 package sample
 
+import "testing"
+
 type UserServiceTestSuite struct{}
 
 func (s *UserServiceTestSuite) TestCreate()    {}
@@ -17,3 +19,5 @@ type PaymentTestSuite struct{} // want `suite PaymentTestSuite has BeforeAll but
 
 func (s *PaymentTestSuite) TestCharge() {}
 func (s *PaymentTestSuite) BeforeAll()  {}
+
+func TestStdlib(t *testing.T) {} // want `stdlib test TestStdlib — consider using a gotest suite`

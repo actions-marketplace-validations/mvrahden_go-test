@@ -9,7 +9,8 @@ import (
 	"github.com/mvrahden/go-test/internal/gotestgen"
 )
 
-func runGenerate(args []string) int {
+func runGenerate(inv Invocation) int {
+	args := inv.TagArgs()
 	patterns := ExtractPackagePatterns(args)
 	tags, _ := extractTagsFlag(args)
 	var buildFlags []string

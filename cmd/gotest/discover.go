@@ -59,8 +59,8 @@ type discoverMethod struct {
 	Col      int    `json:"col"`
 }
 
-func runDiscover(args []string) int {
-	tags, remaining := extractTagsFlag(args)
+func runDiscover(inv Invocation) int {
+	tags, remaining := extractTagsFlag(inv.TagArgs())
 	patterns := ExtractPackagePatterns(remaining)
 	var buildFlags []string
 	if tags != "" {

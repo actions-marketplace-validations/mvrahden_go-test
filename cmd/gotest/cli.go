@@ -10,32 +10,40 @@ import (
 	"time"
 
 	"github.com/mvrahden/go-test/about"
+	"github.com/mvrahden/go-test/internal/config"
 )
 
 func main() {
+	projectCfg, err := config.Load(".")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: loading %s: %s\n", config.FileName, err)
+		os.Exit(2)
+	}
+
 	subcmd, remaining := ParseSubcommand(os.Args[1:])
+	inv := Invocation{Args: remaining, Config: projectCfg}
 
 	switch subcmd {
 	case "discover":
-		os.Exit(runDiscover(remaining))
+		os.Exit(runDiscover(inv))
 	case "prepare":
-		os.Exit(runPrepare(remaining))
+		os.Exit(runPrepare(inv))
 	case "scaffold":
-		os.Exit(runScaffold(remaining))
+		os.Exit(runScaffold(inv))
 	case "migrate":
-		os.Exit(runMigrate(remaining))
+		os.Exit(runMigrate(inv))
 	case "generate":
-		os.Exit(runGenerate(remaining))
+		os.Exit(runGenerate(inv))
 	case "clean":
-		os.Exit(runClean(remaining))
+		os.Exit(runClean(inv))
 	case "spec":
-		os.Exit(runSpec(remaining))
+		os.Exit(runSpec(inv))
 	case "watch":
-		os.Exit(runWatch(remaining))
+		os.Exit(runWatch(inv))
 	case "refactor":
-		os.Exit(runRefactor(remaining))
+		os.Exit(runRefactor(inv))
 	case "lint":
-		os.Exit(runLint(remaining))
+		os.Exit(runLint(inv))
 	case "version":
 		fmt.Println(about.LongInfo())
 		return
@@ -43,78 +51,91 @@ func main() {
 		printUsage()
 		return
 	default:
-		args := os.Args[1:]
-		if slices.Contains(args, "--spec") {
-			var specArgs []string
-			for _, a := range args {
-				if a != "--spec" {
-					specArgs = append(specArgs, a)
-				}
-			}
-			os.Exit(runSpec(specArgs))
-		}
-		ownArgs, goTestArgs := SplitArgs(args)
-
-		jsonMode, goTestArgs := stripJSONFlag(goTestArgs)
-
-		minCoverage, err := parseMinFlag(ownArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
-			os.Exit(2)
-		}
-		setupTimeout, err := parseSetupTimeoutFlag(ownArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
-			os.Exit(2)
-		}
-
-		var coverProfile string
-		if minCoverage > 0 {
-			for _, arg := range goTestArgs {
-				if v, ok := strings.CutPrefix(arg, "-coverprofile="); ok {
-					coverProfile = v
-				}
-			}
-			if coverProfile == "" {
-				f, err := os.CreateTemp("", "gotest-cover-*.out")
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
-					os.Exit(2)
-				}
-				coverProfile = f.Name()
-				f.Close()
-				defer os.Remove(coverProfile)
-				goTestArgs = append(goTestArgs, "-coverprofile="+coverProfile)
-			}
-		}
-
-		patterns := ExtractPackagePatterns(goTestArgs)
-		cfg := ExecConfig{
-			GoTestArgs:      goTestArgs,
-			PackagePatterns: patterns,
-			SetupTimeout:    setupTimeout,
-			Debug:           slices.Contains(ownArgs, "--debug"),
-			CI:              slices.Contains(ownArgs, "--ci"),
-			JSON:            jsonMode,
-			UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
-		}
-
-		code := Run(cfg)
-
-		if code == 0 && minCoverage > 0 {
-			pct, err := readCoverageTotal(coverProfile)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "FAIL: reading coverage: %s\n", err)
-				os.Exit(2)
-			}
-			if pct < float64(minCoverage) {
-				fmt.Fprintf(os.Stderr, "\nFAIL: %.1f%% coverage (minimum %d%%)\n", pct, minCoverage)
-				os.Exit(1)
-			}
-		}
-
-		os.Exit(code)
+		inv.Args = os.Args[1:]
+		os.Exit(runTest(inv))
 	}
+}
+
+func runTest(inv Invocation) int {
+	if slices.Contains(inv.Args, "--spec") {
+		var specArgs []string
+		for _, a := range inv.Args {
+			if a != "--spec" {
+				specArgs = append(specArgs, a)
+			}
+		}
+		return runSpec(Invocation{Args: specArgs, Config: inv.Config})
+	}
+
+	args := inv.DefaultArgs()
+	ownArgs, goTestArgs, err := SplitArgs(args, testAllowed)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
+
+	jsonMode, goTestArgs := stripJSONFlag(goTestArgs)
+
+	minCoverage, err := parseMinFlag(ownArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
+	if minCoverage == 0 {
+		minCoverage = inv.Config.MinCoverage
+	}
+	setupTimeout, err := parseSetupTimeoutFlag(ownArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
+
+	var coverProfile string
+	if minCoverage > 0 {
+		for _, arg := range goTestArgs {
+			if v, ok := strings.CutPrefix(arg, "-coverprofile="); ok {
+				coverProfile = v
+			}
+		}
+		if coverProfile == "" {
+			f, err := os.CreateTemp("", "gotest-cover-*.out")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+				return 2
+			}
+			coverProfile = f.Name()
+			f.Close()
+			defer os.Remove(coverProfile)
+			goTestArgs = append(goTestArgs, "-coverprofile="+coverProfile)
+		}
+	}
+
+	patterns := ExtractPackagePatterns(goTestArgs)
+	cfg := ExecConfig{
+		GoTestArgs:      goTestArgs,
+		PackagePatterns: patterns,
+		SetupTimeout:    setupTimeout,
+		Debug:           slices.Contains(ownArgs, "--debug"),
+		CI:              slices.Contains(ownArgs, "--ci"),
+		JSON:            jsonMode,
+		UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
+	}
+
+	code := Run(cfg)
+
+	if code == 0 && minCoverage > 0 {
+		pct, err := readCoverageTotal(coverProfile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAIL: reading coverage: %s\n", err)
+			return 2
+		}
+		if pct < float64(minCoverage) {
+			fmt.Fprintf(os.Stderr, "\nFAIL: %.1f%% coverage (minimum %d%%)\n", pct, minCoverage)
+			return 1
+		}
+	}
+
+	return code
 }
 
 func parseMinFlag(args []string) (int, error) {
@@ -196,7 +217,8 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `%s — test suite runner for Go
 
 Usage:
-  gotest [subcommand] [flags] [packages...]
+  gotest [gotest-flags] [--] [go-test-flags] [packages...]
+  gotest <subcommand> [flags] [packages...]
 
 Subcommands:
   discover    Discover test suites and output JSON metadata
@@ -212,7 +234,7 @@ Subcommands:
   version     Print version information
   help        Show this help message
 
-Flags:
+Flags (gotest):
   --ci                      Enable focus guard (fail on F_ prefixes)
   --debug                   Keep generated overlay for inspection
   --spec                    Append spec view after normal test output
@@ -221,6 +243,7 @@ Flags:
   --setup-timeout=<dur>     Shared fixture setup deadline (default 1m)
   --debounce=<dur>          Watch mode debounce interval (default 200ms)
 
-All other flags and arguments are forwarded to "go test".
+gotest flags use --double-dash; go test flags use -single-dash.
+Use a bare "--" to pass unrecognized flags to go test without validation.
 `, about.ShortInfo())
 }
