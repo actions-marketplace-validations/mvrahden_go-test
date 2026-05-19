@@ -10,12 +10,13 @@ import (
 	"golang.org/x/tools/go/analysis/singlechecker"
 )
 
-func runLint(args []string, projectCfg config.ProjectConfig) int {
+func runLint(inv Invocation) int {
+	args := inv.Args
 	if len(args) == 0 {
 		args = []string{"./..."}
 	}
 
-	flagArgs, err := lintSkipFlags(args, projectCfg)
+	flagArgs, err := lintSkipFlags(args, inv.Config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2

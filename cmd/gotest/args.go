@@ -4,8 +4,48 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mvrahden/go-test/internal/config"
 	"github.com/mvrahden/go-test/internal/gotestrunner"
 )
+
+// Invocation carries the resolved state for a single CLI invocation.
+type Invocation struct {
+	Args   []string
+	Config config.ProjectConfig
+}
+
+// TagArgs returns args with -tags prepended from config, if not already set.
+func (inv Invocation) TagArgs() []string {
+	if inv.Config.Tags == "" {
+		return inv.Args
+	}
+	if hasFlag(inv.Args, "-tags") {
+		return inv.Args
+	}
+	return append([]string{"-tags=" + inv.Config.Tags}, inv.Args...)
+}
+
+// DefaultArgs returns args with tags, setup-timeout, and debounce from config,
+// each only if not already set via CLI flags.
+func (inv Invocation) DefaultArgs() []string {
+	out := inv.TagArgs()
+	if inv.Config.SetupTimeout.Duration() > 0 && !hasFlag(out, "--setup-timeout") {
+		out = append([]string{"--setup-timeout=" + inv.Config.SetupTimeout.Duration().String()}, out...)
+	}
+	if inv.Config.Debounce.Duration() > 0 && !hasFlag(out, "--debounce") {
+		out = append([]string{"--debounce=" + inv.Config.Debounce.Duration().String()}, out...)
+	}
+	return out
+}
+
+func hasFlag(args []string, name string) bool {
+	for _, arg := range args {
+		if arg == name || strings.HasPrefix(arg, name+"=") {
+			return true
+		}
+	}
+	return false
+}
 
 type ExecConfig struct {
 	GoTestArgs      []string

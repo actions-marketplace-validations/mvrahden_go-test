@@ -10,8 +10,8 @@ import (
 	"github.com/mvrahden/go-test/about"
 )
 
-func runClean(args []string) int {
-	patterns := ExtractPackagePatterns(args)
+func runClean(inv Invocation) int {
+	patterns := ExtractPackagePatterns(inv.Args)
 
 	var removed int
 	for _, pattern := range patterns {

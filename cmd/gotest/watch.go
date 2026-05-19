@@ -50,7 +50,8 @@ func parseDebounceFlag(args []string) (time.Duration, error) {
 	return 200 * time.Millisecond, nil
 }
 
-func runWatch(args []string) int {
+func runWatch(inv Invocation) int {
+	args := inv.DefaultArgs()
 	jsonMode, args := parseWatchFlags(args)
 	ownArgs, goTestArgs := SplitArgs(args)
 	setupTimeout, err := parseSetupTimeoutFlag(ownArgs)

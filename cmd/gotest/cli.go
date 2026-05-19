@@ -21,28 +21,29 @@ func main() {
 	}
 
 	subcmd, remaining := ParseSubcommand(os.Args[1:])
+	inv := Invocation{Args: remaining, Config: projectCfg}
 
 	switch subcmd {
 	case "discover":
-		os.Exit(runDiscover(applyConfigTags(remaining, projectCfg)))
+		os.Exit(runDiscover(inv))
 	case "prepare":
-		os.Exit(runPrepare(applyConfigTags(remaining, projectCfg)))
+		os.Exit(runPrepare(inv))
 	case "scaffold":
-		os.Exit(runScaffold(remaining))
+		os.Exit(runScaffold(inv))
 	case "migrate":
-		os.Exit(runMigrate(remaining))
+		os.Exit(runMigrate(inv))
 	case "generate":
-		os.Exit(runGenerate(applyConfigTags(remaining, projectCfg)))
+		os.Exit(runGenerate(inv))
 	case "clean":
-		os.Exit(runClean(remaining))
+		os.Exit(runClean(inv))
 	case "spec":
-		os.Exit(runSpec(applyConfigDefaults(remaining, projectCfg)))
+		os.Exit(runSpec(inv))
 	case "watch":
-		os.Exit(runWatch(applyConfigDefaults(remaining, projectCfg)))
+		os.Exit(runWatch(inv))
 	case "refactor":
-		os.Exit(runRefactor(remaining))
+		os.Exit(runRefactor(inv))
 	case "lint":
-		os.Exit(runLint(remaining, projectCfg))
+		os.Exit(runLint(inv))
 	case "version":
 		fmt.Println(about.LongInfo())
 		return
@@ -50,128 +51,87 @@ func main() {
 		printUsage()
 		return
 	default:
-		args := os.Args[1:]
-		if slices.Contains(args, "--spec") {
-			var specArgs []string
-			for _, a := range args {
-				if a != "--spec" {
-					specArgs = append(specArgs, a)
-				}
-			}
-			os.Exit(runSpec(applyConfigDefaults(specArgs, projectCfg)))
-		}
-		args = applyConfigDefaults(args, projectCfg)
-		ownArgs, goTestArgs := SplitArgs(args)
+		inv.Args = os.Args[1:]
+		os.Exit(runTest(inv))
+	}
+}
 
-		jsonMode, goTestArgs := stripJSONFlag(goTestArgs)
-
-		minCoverage, err := parseMinFlag(ownArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
-			os.Exit(2)
-		}
-		if minCoverage == 0 && projectCfg.MinCoverage > 0 {
-			minCoverage = projectCfg.MinCoverage
-		}
-		setupTimeout, err := parseSetupTimeoutFlag(ownArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
-			os.Exit(2)
-		}
-
-		var coverProfile string
-		if minCoverage > 0 {
-			for _, arg := range goTestArgs {
-				if v, ok := strings.CutPrefix(arg, "-coverprofile="); ok {
-					coverProfile = v
-				}
-			}
-			if coverProfile == "" {
-				f, err := os.CreateTemp("", "gotest-cover-*.out")
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
-					os.Exit(2)
-				}
-				coverProfile = f.Name()
-				f.Close()
-				defer os.Remove(coverProfile)
-				goTestArgs = append(goTestArgs, "-coverprofile="+coverProfile)
+func runTest(inv Invocation) int {
+	if slices.Contains(inv.Args, "--spec") {
+		var specArgs []string
+		for _, a := range inv.Args {
+			if a != "--spec" {
+				specArgs = append(specArgs, a)
 			}
 		}
+		return runSpec(Invocation{Args: specArgs, Config: inv.Config})
+	}
 
-		patterns := ExtractPackagePatterns(goTestArgs)
-		cfg := ExecConfig{
-			GoTestArgs:      goTestArgs,
-			PackagePatterns: patterns,
-			SetupTimeout:    setupTimeout,
-			Debug:           slices.Contains(ownArgs, "--debug"),
-			CI:              slices.Contains(ownArgs, "--ci"),
-			JSON:            jsonMode,
-			UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
+	args := inv.DefaultArgs()
+	ownArgs, goTestArgs := SplitArgs(args)
+
+	jsonMode, goTestArgs := stripJSONFlag(goTestArgs)
+
+	minCoverage, err := parseMinFlag(ownArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
+	if minCoverage == 0 {
+		minCoverage = inv.Config.MinCoverage
+	}
+	setupTimeout, err := parseSetupTimeoutFlag(ownArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
+
+	var coverProfile string
+	if minCoverage > 0 {
+		for _, arg := range goTestArgs {
+			if v, ok := strings.CutPrefix(arg, "-coverprofile="); ok {
+				coverProfile = v
+			}
 		}
-
-		code := Run(cfg)
-
-		if code == 0 && minCoverage > 0 {
-			pct, err := readCoverageTotal(coverProfile)
+		if coverProfile == "" {
+			f, err := os.CreateTemp("", "gotest-cover-*.out")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "FAIL: reading coverage: %s\n", err)
-				os.Exit(2)
+				fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+				return 2
 			}
-			if pct < float64(minCoverage) {
-				fmt.Fprintf(os.Stderr, "\nFAIL: %.1f%% coverage (minimum %d%%)\n", pct, minCoverage)
-				os.Exit(1)
-			}
-		}
-
-		os.Exit(code)
-	}
-}
-
-// applyConfigTags prepends -tags from config if not already set in args.
-func applyConfigTags(args []string, cfg config.ProjectConfig) []string {
-	if cfg.Tags == "" {
-		return args
-	}
-	for _, arg := range args {
-		if arg == "-tags" || strings.HasPrefix(arg, "-tags=") {
-			return args
-		}
-	}
-	return append([]string{"-tags=" + cfg.Tags}, args...)
-}
-
-// applyConfigDefaults prepends config-derived flags if not already set in args.
-func applyConfigDefaults(args []string, cfg config.ProjectConfig) []string {
-	out := applyConfigTags(args, cfg)
-
-	if cfg.SetupTimeout.Duration() > 0 {
-		hasFlag := false
-		for _, arg := range out {
-			if arg == "--setup-timeout" || strings.HasPrefix(arg, "--setup-timeout=") {
-				hasFlag = true
-				break
-			}
-		}
-		if !hasFlag {
-			out = append([]string{"--setup-timeout=" + cfg.SetupTimeout.Duration().String()}, out...)
+			coverProfile = f.Name()
+			f.Close()
+			defer os.Remove(coverProfile)
+			goTestArgs = append(goTestArgs, "-coverprofile="+coverProfile)
 		}
 	}
 
-	if cfg.Debounce.Duration() > 0 {
-		hasFlag := false
-		for _, arg := range out {
-			if arg == "--debounce" || strings.HasPrefix(arg, "--debounce=") {
-				hasFlag = true
-				break
-			}
+	patterns := ExtractPackagePatterns(goTestArgs)
+	cfg := ExecConfig{
+		GoTestArgs:      goTestArgs,
+		PackagePatterns: patterns,
+		SetupTimeout:    setupTimeout,
+		Debug:           slices.Contains(ownArgs, "--debug"),
+		CI:              slices.Contains(ownArgs, "--ci"),
+		JSON:            jsonMode,
+		UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
+	}
+
+	code := Run(cfg)
+
+	if code == 0 && minCoverage > 0 {
+		pct, err := readCoverageTotal(coverProfile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAIL: reading coverage: %s\n", err)
+			return 2
 		}
-		if !hasFlag {
-			out = append([]string{"--debounce=" + cfg.Debounce.Duration().String()}, out...)
+		if pct < float64(minCoverage) {
+			fmt.Fprintf(os.Stderr, "\nFAIL: %.1f%% coverage (minimum %d%%)\n", pct, minCoverage)
+			return 1
 		}
 	}
 
-	return out
+	return code
 }
 
 func parseMinFlag(args []string) (int, error) {

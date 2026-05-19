@@ -16,8 +16,8 @@ import (
 	"github.com/mvrahden/go-test/internal/gotestspec"
 )
 
-func runSpec(args []string) int {
-	format, output, input, noColor, remaining := parseSpecFlags(args)
+func runSpec(inv Invocation) int {
+	format, output, input, noColor, remaining := parseSpecFlags(inv.DefaultArgs())
 
 	if input != "" {
 		return runSpecFromInput(input, format, output, noColor)

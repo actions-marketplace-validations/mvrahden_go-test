@@ -7,8 +7,8 @@ import (
 	"github.com/mvrahden/go-test/internal/migrate"
 )
 
-func runMigrate(args []string) int {
-	patterns := args
+func runMigrate(inv Invocation) int {
+	patterns := inv.Args
 	if len(patterns) == 0 {
 		patterns = []string{"."}
 	}

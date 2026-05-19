@@ -19,7 +19,8 @@ type prepareOutput struct {
 	StateFile   string `json:"stateFile,omitempty"`
 }
 
-func runPrepare(args []string) int {
+func runPrepare(inv Invocation) int {
+	args := inv.TagArgs()
 	patterns := ExtractPackagePatterns(args)
 	tags, _ := extractTagsFlag(args)
 	var buildFlags []string
