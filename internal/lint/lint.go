@@ -70,11 +70,92 @@ func run(pass *analysis.Pass) (any, error) {
 }
 
 func report(pass *analysis.Pass, rule Rule, pos token.Pos, format string, args ...any) {
+	if isSuppressed(pass, pos, rule) {
+		return
+	}
 	pass.Report(analysis.Diagnostic{
 		Pos:      pos,
 		Category: string(rule),
 		Message:  fmt.Sprintf(format, args...),
 	})
+}
+
+func isSuppressed(pass *analysis.Pass, pos token.Pos, rule Rule) bool {
+	position := pass.Fset.Position(pos)
+	for _, file := range pass.Files {
+		if pass.Fset.Position(file.Pos()).Filename != position.Filename {
+			continue
+		}
+		pkgLine := pass.Fset.Position(file.Package).Line
+		for _, cg := range file.Comments {
+			for _, c := range cg.List {
+				rules, ok := parseNolint(c.Text)
+				if !ok {
+					continue
+				}
+				if rules != nil && !rules[rule] {
+					continue
+				}
+				cLine := pass.Fset.Position(c.Pos()).Line
+				if cLine == pkgLine {
+					return true
+				}
+				if cLine == position.Line {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return false
+}
+
+func docSuppressed(doc *ast.CommentGroup, rule Rule) bool {
+	if doc == nil {
+		return false
+	}
+	for _, c := range doc.List {
+		rules, ok := parseNolint(c.Text)
+		if !ok {
+			continue
+		}
+		if rules == nil || rules[rule] {
+			return true
+		}
+	}
+	return false
+}
+
+func parseNolint(text string) (rules map[Rule]bool, ok bool) {
+	if !strings.HasPrefix(text, "//nolint") {
+		return nil, false
+	}
+	rest := text[len("//nolint"):]
+	if rest == "" {
+		return nil, true
+	}
+	if rest[0] != ':' {
+		return nil, false
+	}
+	rest = rest[1:]
+	if idx := strings.Index(rest, " //"); idx >= 0 {
+		rest = rest[:idx]
+	}
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return nil, true
+	}
+	rules = make(map[Rule]bool)
+	for _, r := range strings.Split(rest, ",") {
+		r = strings.TrimSpace(r)
+		if r != "" {
+			rules[Rule(r)] = true
+		}
+	}
+	if len(rules) == 0 {
+		return nil, true
+	}
+	return rules, true
 }
 
 type suiteInfo struct {
@@ -203,6 +284,9 @@ func checkStdlibTests(pass *analysis.Pass, insp *inspector.Inspector) {
 			return
 		}
 		if !isTestingT(fd.Type.Params.List[0].Type) {
+			return
+		}
+		if docSuppressed(fd.Doc, StdlibTest) {
 			return
 		}
 		report(pass, StdlibTest, fd.Pos(), "stdlib test %s — consider using a gotest suite", name)
