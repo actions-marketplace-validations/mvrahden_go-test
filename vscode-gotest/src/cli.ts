@@ -3,11 +3,7 @@ import * as path from "node:path";
 import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import {
-  resolveGoBinary,
-  fileExists,
-  clearGoBinaryCache,
-} from "./goBinary.js";
+import { resolveGoBinary, fileExists, clearGoBinaryCache } from "./goBinary.js";
 
 export { resolveGoBinary } from "./goBinary.js";
 
@@ -77,9 +73,7 @@ export async function buildCliCommand(
         );
       }
     } else {
-      log?.debug(
-        `[cli] cliPath "${resolved}" not found, probing alternatives`,
-      );
+      log?.debug(`[cli] cliPath "${resolved}" not found, probing alternatives`);
     }
   }
 
@@ -216,7 +210,9 @@ async function queryBinaryVersion(
     if (match) {
       return match[1];
     }
-    log?.debug(`[cli] unexpected version output from ${binPath}: ${stdout.trim()}`);
+    log?.debug(
+      `[cli] unexpected version output from ${binPath}: ${stdout.trim()}`,
+    );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     log?.debug(`[cli] version check failed for ${binPath}: ${msg}`);

@@ -313,8 +313,7 @@ ${SCRIPT}
   }
 
   private async runSpecFromInput(jsonInput: string): Promise<string> {
-    const workspaceDir =
-      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const cmd = await buildCliCommand(
       ["spec", "--input=-", "--format=json"],
       workspaceDir,
