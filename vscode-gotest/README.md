@@ -4,10 +4,10 @@
   <img src="https://raw.githubusercontent.com/mvrahden/go-test/main/docs/static/gopher.png" alt="gotest gopher" width="360" />
 </p>
 
-Specification-driven test suites for AI-assisted Go development.
+Specification-driven test suites for Go.
 
-[gotest](https://github.com/mvrahden/go-test) turns your tests into behavioral specifications — BDD-style suites that read as documentation, with structured output for AI-assisted workflows.
-This extension brings that workflow into VS Code: run, debug, watch, and verify your specifications without leaving the editor.
+[gotest](https://github.com/mvrahden/go-test) generates standard `go test` code from struct-based suites — BDD organization, lifecycle hooks, and structured output. No reflection, no runtime deps.
+This extension brings that into VS Code: run, debug, watch, and verify your suites without leaving the editor.
 
 ## Why this extension?
 

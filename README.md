@@ -10,13 +10,13 @@
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Specification-driven test suites for AI-assisted Go development.
+Specification-driven test suites for Go.
 
 `gotest` closes the gap between `func TestX(t *testing.T)` and a well-organized test suite through code generation.
 You write structs, name them well, and the tool handles the rest.
 No runtime dependencies.
 No reflection.
-No lock-in.
+Pure code generation.
 Just standard Go tests with lifecycle management and structured organization.
 
 ## Why gotest?
@@ -29,8 +29,8 @@ As test suites grow, organization becomes a discipline problem rather than a too
 Test output is standard — but the mechanism behind it isn't.
 
 **gotest** takes a different approach: you write structs with naming conventions, and a code generator produces the `func Test*` wrappers, lifecycle wiring, and `t.Run` nesting that you'd write by hand.
-The generated code is deleted after tests run.
-What remains is standard `go test` output, zero runtime dependencies, and no lock-in — `gotest clean` removes all traces, and your test structs still compile.
+Generated wiring never touches your source tree — your project directory stays clean.
+What remains is standard `go test` output, zero runtime dependencies, and test structs that are plain Go.
 
 **AI-assisted development** — BDD-style suites double as behavioral specifications. `gotest spec` renders your test structure as a readable contract with structured JSON output. Your tests are the documentation — always in sync, never stale.
 
@@ -570,7 +570,7 @@ Combine with `F_` prefix for a tight feedback loop — only focused tests run on
 ## Commands
 
 ```bash
-gotest ./... -v -race          # generate, test, cleanup (default)
+gotest ./... -v -race          # generate overlays and run tests (default)
 gotest spec ./...              # behavioral specification view
 gotest watch ./... -v          # watch mode with auto-rerun
 gotest scaffold ./pkg/user.Svc # generate suite skeleton from type
@@ -578,7 +578,7 @@ gotest lint ./...              # static analysis for test suites
 gotest refactor toggle-focus . # toggle F_/X_ prefixes programmatically
 gotest migrate ./...           # convert testify/suite to go-test
 gotest generate ./...          # run code generation only (no tests)
-gotest clean ./...             # remove orphaned generated files
+gotest clean ./...             # remove cached overlays (debugging)
 gotest version                 # print version
 gotest help                    # show help
 ```

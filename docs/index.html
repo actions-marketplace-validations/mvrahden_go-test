@@ -3,21 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>gotest — Specification-Driven Test Suites for AI-Assisted Go Development</title>
-  <meta name="description" content="Go test suites that double as behavioral specifications. Powered by code generation with structured output for AI-assisted development. Zero reflection, zero runtime deps.">
+  <title>gotest — Specification-Driven Test Suites for Go</title>
+  <meta name="description" content="A go test code generator. Struct-based suites with lifecycle hooks, BDD structure, and spec output for AI-assisted workflows. Zero reflection, zero runtime deps.">
   <meta name="keywords" content="go, golang, testing, test framework, bdd, code generation, test suite, assertions, snapshot testing, testify alternative, specification, behavioral specification, ai-assisted, ai">
 
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://mvrahden.github.io/go-test/">
-  <meta property="og:title" content="gotest — Specification-Driven Test Suites for AI-Assisted Go Development">
-  <meta property="og:description" content="Test suites that double as behavioral specifications with structured output. Zero reflection, zero runtime deps, zero lock-in.">
+  <meta property="og:title" content="gotest — Specification-Driven Test Suites for Go">
+  <meta property="og:description" content="A go test code generator. Struct-based suites with lifecycle hooks, BDD structure, and spec output. Zero reflection, zero runtime deps.">
   <meta property="og:image" content="https://mvrahden.github.io/go-test/static/gopher.png">
   <meta property="og:image:width" content="1024">
   <meta property="og:image:height" content="572">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="gotest — Specification-Driven Test Suites for Go">
-  <meta name="twitter:description" content="Test suites that double as behavioral specifications with structured output. Zero reflection, zero runtime deps, zero lock-in.">
+  <meta name="twitter:description" content="A go test code generator. Struct-based suites with lifecycle hooks, BDD structure, and spec output. Zero reflection, zero runtime deps.">
   <meta name="twitter:image" content="https://mvrahden.github.io/go-test/static/gopher.png">
 
   <link rel="icon" type="image/png" href="static/logo.png">
@@ -37,7 +37,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
     "name": "gotest",
-    "description": "Go test suites that double as behavioral specifications. Powered by code generation with structured output for AI-assisted development.",
+    "description": "A go test code generator. Struct-based suites with lifecycle hooks, BDD structure, and spec output for AI-assisted workflows.",
     "url": "https://mvrahden.github.io/go-test/",
     "codeRepository": "https://github.com/mvrahden/go-test",
     "programmingLanguage": "Go",
@@ -170,7 +170,17 @@
       font-size: 1.35rem;
       color: var(--text-secondary);
       max-width: 600px;
+      margin: 0 auto 0.75rem;
+    }
+    .hero .bridge {
+      font-size: 1rem;
+      color: var(--text-dimmed);
+      max-width: 540px;
       margin: 0 auto 1.5rem;
+    }
+    .hero .bridge code {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
     }
     .hero .pills {
       display: flex;
@@ -580,11 +590,13 @@
     <section class="hero">
       <div class="container">
         <h1>gotest</h1>
-        <p class="tagline">Specification-driven test suites for AI-assisted Go development.</p>
+        <p class="tagline">Specification-driven test suites for Go.</p>
+        <p class="bridge">A <code>go test</code> code generator &mdash; you write structs with naming conventions, it handles the wiring.</p>
         <div class="pills">
+          <span class="pill"><code>go test</code> under the hood</span>
           <span class="pill">No runtime deps</span>
           <span class="pill">No reflection</span>
-          <span class="pill">No lock-in</span>
+          <span class="pill">Pure code generation</span>
         </div>
         <img src="static/gopher.png" alt="gotest gopher" class="hero-gopher" width="360">
         <div class="install-cmd">
@@ -626,7 +638,7 @@
     <span class="t-skip">~</span><span class="t-skip"> hard-deletes after 30 days &#8212; SKIPPED</span>
 <span class="t-summary">2 suites, 5 behaviors: <span class="t-pass">4 passed</span>, 0 failed, <span class="t-skip">1 skipped</span></span></pre>
         </div>
-        <p class="caption">Your test suites are behavioral specifications. Every suite tells a story.</p>
+        <p class="caption">Under the hood it's <code>go test</code>. On the surface, your suites read as specifications.</p>
       </div>
     </section>
 
@@ -701,7 +713,7 @@
           <span class="step-arrow">&#8594;</span>
           <div class="code-step">
             <strong>go test runs</strong>
-            Standard output, standard tooling. Generated files are deleted after.
+            Standard output, standard tooling. Your source tree stays clean.
           </div>
         </div>
       </div>
@@ -739,7 +751,7 @@
             <tr>
               <td>Lock-in</td>
               <td class="yes">High</td>
-              <td class="no">None &mdash; eject freely</td>
+              <td class="no">Low &mdash; standard Go structs</td>
             </tr>
             <tr>
               <td>BDD vocabulary</td>
@@ -768,7 +780,7 @@
           <div class="eco-item">
             <strong>CLI</strong>
             <code>gotest ./... -v -race</code>
-            <p>Generate, test, cleanup in one command</p>
+            <p>Generate and test in one command</p>
           </div>
           <div class="eco-item">
             <strong>Linter</strong>
@@ -785,6 +797,16 @@
             <code>gotest --ci ./...</code>
             <p>Coverage thresholds, safety checks, spec reports</p>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom CTA -->
+    <section class="hero" style="padding: 3rem 1.5rem;">
+      <div class="container">
+        <div class="install-cmd">
+          <code>go install github.com/mvrahden/go-test/cmd/gotest@latest</code>
+          <button onclick="navigator.clipboard.writeText('go install github.com/mvrahden/go-test/cmd/gotest@latest').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);gtag('event','copy_install_command')})" aria-label="Copy install command">Copy</button>
         </div>
       </div>
     </section>
