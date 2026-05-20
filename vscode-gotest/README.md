@@ -1,19 +1,19 @@
 # Go - Test Suites
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/mvrahden/go-test/main/static/gopher.png" alt="gotest gopher" width="360" />
+  <img src="https://raw.githubusercontent.com/mvrahden/go-test/main/docs/static/gopher.png" alt="gotest gopher" width="360" />
 </p>
 
 Specification-driven test suites for AI-assisted Go development.
 
-[go-test](https://github.com/mvrahden/go-test) turns your tests into behavioral specifications — BDD-style suites that read as documentation, with structured output for AI-assisted workflows.
+[gotest](https://github.com/mvrahden/go-test) turns your tests into behavioral specifications — BDD-style suites that read as documentation, with structured output for AI-assisted workflows.
 This extension brings that workflow into VS Code: run, debug, watch, and verify your specifications without leaving the editor.
 
 ## Why this extension?
 
 AI writes code fast. The bottleneck is verification — you can't review AI-generated code line by line at the rate it's produced.
 
-[go-test](https://github.com/mvrahden/go-test) closes that gap. Test suites become behavioral specifications. The Spec View renders your specification as an interactive tree with structured output. Coverage shows implementation progress. You define what the system should do — tests verify.
+[gotest](https://github.com/mvrahden/go-test) closes that gap. Test suites become behavioral specifications. The Spec View renders your specification as an interactive tree with structured output. Coverage shows implementation progress. You define what the system should do — tests verify.
 
 - **Spec View** — Your quality dashboard. BDD-formatted specification tree with pass/fail/skip indicators, go-to-source navigation, and clipboard export. Paste specs into AI conversations as context.
 - **Suite-aware Test Explorer** — Navigate tests as Package > Suite > Method > Subtest, not a flat list of functions.
@@ -46,7 +46,7 @@ Also available on [Open VSX](https://open-vsx.org/extension/mvrahden/gotest) for
 
 ### First run
 
-1. Open a Go project that uses [go-test](https://github.com/mvrahden/go-test) suites.
+1. Open a Go project that uses [gotest](https://github.com/mvrahden/go-test) suites.
 2. The extension discovers test suites automatically on activation.
 3. Open the **Testing** sidebar to see your suites organized by package.
 4. Click the **Run** or **Debug** button next to any suite or method.
@@ -212,7 +212,7 @@ The extension resolves the Go toolchain per workspace folder:
 
 - VS Code 1.101 or later
 - Go 1.24 or later
-- A Go project using [go-test](https://github.com/mvrahden/go-test) suites
+- A Go project using [gotest](https://github.com/mvrahden/go-test) suites
 - [Delve](https://github.com/go-delve/delve) for debug support
 
 ## License
