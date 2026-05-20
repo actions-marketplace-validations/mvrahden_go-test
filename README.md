@@ -1,7 +1,7 @@
 # gotest
 
 <p align="center">
-  <img src="static/gopher.png" alt="gotest gopher" width="360" />
+  <img src="docs/static/gopher.png" alt="gotest gopher" width="360" />
 </p>
 
 [![CI](https://github.com/mvrahden/go-test/actions/workflows/test.yml/badge.svg)](https://github.com/mvrahden/go-test/actions/workflows/test.yml)
