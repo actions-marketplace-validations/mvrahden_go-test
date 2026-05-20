@@ -133,9 +133,18 @@
     }
     .nav-brand:hover { text-decoration: none; }
     .nav-brand img { width: 28px; height: 28px; border-radius: 50%; }
-    .nav-links { display: flex; gap: 1.25rem; font-size: 0.9rem; }
+    .nav-links { display: flex; gap: 1.25rem; font-size: 0.9rem; align-items: center; }
     .nav-links a { color: var(--text-secondary); }
     .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links .nav-ref {
+      padding: 0.25rem 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-weight: 600;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-links .nav-ref:hover { background: var(--bg-alt); }
 
     /* ===== Hero ===== */
     .hero {
@@ -206,46 +215,41 @@
     }
     .install-cmd button:hover { background: var(--border); }
     .hero-meta {
-      margin-top: 0.75rem;
+      margin-top: 1rem;
       display: flex;
-      flex-direction: column;
       align-items: center;
-      gap: 0.4rem;
+      justify-content: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
       font-size: 0.8rem;
       color: var(--text-dimmed);
-    }
-    .hero-meta-row {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-      justify-content: center;
     }
     .hero-meta a {
       color: var(--text-secondary);
       text-decoration: none;
     }
     .hero-meta a:hover { text-decoration: underline; }
-    .hero-meta .separator { color: var(--border); }
+    .hero-meta .sep { color: var(--border); }
     .star-btn {
       display: inline-flex;
       align-items: center;
-      gap: 0.3rem;
-      padding: 0.2rem 0.6rem;
+      gap: 0.35rem;
+      padding: 0.3rem 0.7rem;
       border: 1px solid var(--border);
       border-radius: 6px;
-      color: var(--text-secondary);
+      color: var(--text);
+      font-weight: 600;
       text-decoration: none;
       transition: all 0.15s;
       font-size: 0.8rem;
     }
-    .star-btn:hover { background: var(--bg-alt); color: var(--text); text-decoration: none; }
+    .star-btn:hover { background: var(--bg-alt); text-decoration: none; }
     .star-btn .star-icon { color: #e3b341; }
-    .star-count { font-size: 0.75rem; color: var(--text-dimmed); }
+    .star-count { font-weight: 400; color: var(--text-dimmed); }
     .trust-badges {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.4rem;
     }
     .trust-badges img { height: 18px; }
 
@@ -562,7 +566,7 @@
         gotest
       </a>
       <div class="nav-links">
-        <a href="reference.html">Reference</a>
+        <a href="reference.html" class="nav-ref">Reference</a>
         <a href="https://github.com/mvrahden/go-test" onclick="gtag('event','click',{event_category:'outbound',event_label:'github'})">GitHub</a>
         <a href="https://pkg.go.dev/github.com/mvrahden/go-test" onclick="gtag('event','click',{event_category:'outbound',event_label:'pkg.go.dev'})">pkg.go.dev</a>
         <a href="https://marketplace.visualstudio.com/items?itemName=mvrahden.gotest" onclick="gtag('event','click',{event_category:'outbound',event_label:'vscode_marketplace'})">VS Code</a>
@@ -587,17 +591,16 @@
           <button onclick="navigator.clipboard.writeText('go install github.com/mvrahden/go-test/cmd/gotest@latest').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);gtag('event','copy_install_command')})" aria-label="Copy install command">Copy</button>
         </div>
         <div class="hero-meta">
-          <div class="hero-meta-row">
-            <a href="https://github.com/mvrahden/go-test" class="star-btn">
-              <span class="star-icon">&#9734;</span> Star on GitHub<span class="star-count" id="star-count"></span>
-            </a>
-            <span class="separator">&middot;</span>
-            <span id="release-indicator"></span>
-          </div>
-          <div class="trust-badges">
+          <a href="https://github.com/mvrahden/go-test" class="star-btn">
+            <span class="star-icon">&#9734;</span> Star<span class="star-count" id="star-count"></span>
+          </a>
+          <span class="sep">&middot;</span>
+          <span id="release-indicator"></span>
+          <span class="sep">&middot;</span>
+          <span class="trust-badges">
             <a href="https://github.com/mvrahden/go-test/actions/workflows/test.yml"><img src="https://github.com/mvrahden/go-test/actions/workflows/test.yml/badge.svg" alt="CI"></a>
             <a href="https://goreportcard.com/report/github.com/mvrahden/go-test"><img src="https://goreportcard.com/badge/github.com/mvrahden/go-test" alt="Go Report Card"></a>
-          </div>
+          </span>
         </div>
       </div>
     </section>
