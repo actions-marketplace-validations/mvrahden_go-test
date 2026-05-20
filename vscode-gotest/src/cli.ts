@@ -228,12 +228,17 @@ async function hasReplaceDirective(
     const content = await readFile(path.join(workspaceDir, "go.mod"), "utf-8");
     let candidate = modulePath;
     while (candidate) {
-      const pattern = new RegExp(
-        `^\\s*replace\\s+${escapeRegExp(candidate)}\\b`,
-        "m",
-      );
-      if (pattern.test(content)) {
+      const escaped = escapeRegExp(candidate);
+      if (
+        new RegExp(`^\\s*replace\\s+${escaped}(?:\\s|$)`, "m").test(content)
+      ) {
         return true;
+      }
+      const entryPattern = new RegExp(`^\\s*${escaped}(?:\\s|$)`, "m");
+      for (const block of content.matchAll(/^\s*replace\s*\(([\s\S]*?)\)/gm)) {
+        if (entryPattern.test(block[1])) {
+          return true;
+        }
       }
       const lastSlash = candidate.lastIndexOf("/");
       if (lastSlash <= 0) break;
@@ -255,13 +260,14 @@ async function extractVersionFromGoMod(
 
     let candidate = modulePath;
     while (candidate) {
-      const pattern = new RegExp(
-        `^\\s*${escapeRegExp(candidate)}\\s+(v[^\\s]+)`,
-        "m",
-      );
-      const match = pattern.exec(content);
-      if (match) {
-        return match[1];
+      const escaped = escapeRegExp(candidate);
+      const patterns = [
+        new RegExp(`^\\s*${escaped}\\s+(v[^\\s]+)`, "m"),
+        new RegExp(`^\\s*require\\s+${escaped}\\s+(v[^\\s]+)`, "m"),
+      ];
+      for (const pattern of patterns) {
+        const match = pattern.exec(content);
+        if (match) return match[1];
       }
       const lastSlash = candidate.lastIndexOf("/");
       if (lastSlash <= 0) {

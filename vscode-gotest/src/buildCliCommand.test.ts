@@ -46,8 +46,6 @@ vi.mock("./goBinary.js", () => ({
 
 vi.mock("node:fs/promises", () => ({
   readFile: mockReadFile,
-  writeFile: vi.fn(),
-  mkdir: vi.fn(),
 }));
 
 vi.mock("node:child_process", async () => {
@@ -141,6 +139,19 @@ describe("buildCliCommand", () => {
       expect(cmd.bin).toBe("/usr/local/go/bin/go");
       expect(cmd.args[0]).toBe("run");
     });
+
+    it("resolves relative cliPath against workspaceDir", async () => {
+      mockConfigValues.set("cliPath", "./bin/gotest");
+      mockFileExists.mockResolvedValue(true);
+      mockExecFileAsync.mockResolvedValue({
+        stdout: "gotest v1.14.0\n",
+        stderr: "",
+      });
+
+      const cmd = await buildCliCommand(["spec"], "/workspace");
+
+      expect(cmd.bin).toBe("/workspace/bin/gotest");
+    });
   });
 
   describe("step 2: workspace is gotest module", () => {
@@ -231,6 +242,44 @@ describe("buildCliCommand", () => {
 
       expect(cmd.args).toEqual(["run", GOTEST_MODULE, "spec"]);
     });
+
+    it("detects block-format replace", async () => {
+      setGoMod(
+        "/workspace",
+        [
+          "module github.com/myapp",
+          "go 1.24.0",
+          "require (",
+          "\tgithub.com/mvrahden/go-test v1.14.0",
+          ")",
+          "replace (",
+          "\tgithub.com/mvrahden/go-test => ../go-test",
+          ")",
+        ].join("\n"),
+      );
+
+      const cmd = await buildCliCommand(["spec"], "/workspace");
+
+      expect(cmd.args[1]).toBe(GOTEST_MODULE);
+    });
+
+    it("does not false-match replace for module with similar prefix", async () => {
+      setGoMod(
+        "/workspace",
+        [
+          "module github.com/myapp",
+          "go 1.24.0",
+          "require (",
+          "\tgithub.com/mvrahden/go-test v1.14.0",
+          ")",
+          "replace github.com/mvrahden/go-testing => ../go-testing",
+        ].join("\n"),
+      );
+
+      const cmd = await buildCliCommand(["spec"], "/workspace");
+
+      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.14.0`);
+    });
   });
 
   describe("step 4: pinned version", () => {
@@ -252,6 +301,21 @@ describe("buildCliCommand", () => {
         bin: "/usr/local/go/bin/go",
         args: ["run", `${GOTEST_MODULE}@v1.14.0`, "spec", "./..."],
       });
+    });
+
+    it("extracts version from inline require format", async () => {
+      setGoMod(
+        "/workspace",
+        [
+          "module github.com/myapp",
+          "go 1.24.0",
+          "require github.com/mvrahden/go-test v1.14.0",
+        ].join("\n"),
+      );
+
+      const cmd = await buildCliCommand(["spec"], "/workspace");
+
+      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.14.0`);
     });
 
     it("finds version via parent module path walk", async () => {
