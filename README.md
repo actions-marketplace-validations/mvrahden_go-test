@@ -32,7 +32,7 @@ Test output is standard — but the mechanism behind it isn't.
 Generated wiring never touches your source tree — your project directory stays clean.
 What remains is standard `go test` output, zero runtime dependencies, and test structs that are plain Go.
 
-**AI-assisted development** — BDD-style suites double as behavioral specifications. `gotest spec` renders your test structure as a readable contract with structured JSON output. Your tests are the documentation — always in sync, never stale.
+**Structured output** — BDD-style suites double as behavioral specifications. `gotest spec` renders your test structure as a readable contract with structured JSON output. Feed specs into AI conversations, CI reports, or documentation pipelines — always in sync, never stale.
 
 ## Install
 
