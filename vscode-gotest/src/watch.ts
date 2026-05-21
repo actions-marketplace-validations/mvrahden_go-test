@@ -4,7 +4,11 @@ import type { GoTestController } from "./testController.js";
 import type { DiscoveryCache } from "./discovery.js";
 import { parseTestEvents, type TestEvent } from "./outputParser.js";
 import { buildCliCommand, formatCliCommand, type CliCommand } from "./cli.js";
-import { resolveTestItem, applyResults, killProcessTree } from "./runnerUtils.js";
+import {
+  resolveTestItem,
+  applyResults,
+  killProcessTree,
+} from "./runnerUtils.js";
 import type { RunRegistry } from "./runRegistry.js";
 
 /**
@@ -41,7 +45,10 @@ class WatchProcess implements vscode.Disposable {
       `[watch] spawning: ${formatCliCommand(this.cmd)} (cwd: ${this.cwd})`,
     );
 
-    this.child = spawn(this.cmd.bin, this.cmd.args, { cwd: this.cwd, detached: true });
+    this.child = spawn(this.cmd.bin, this.cmd.args, {
+      cwd: this.cwd,
+      detached: true,
+    });
     this.buffer = "";
     this.cycleBuffer = "";
 
@@ -167,7 +174,10 @@ class WatchProcess implements vscode.Disposable {
       this.outputChannel.info(`[watch] sending SIGTERM (pid ${child.pid})`);
       killProcessTree(child, "SIGTERM");
 
-      const killTimeout = vscode.workspace.getConfiguration("gotest").get<number>("forceKillTimeout", 600) * 1000;
+      const killTimeout =
+        vscode.workspace
+          .getConfiguration("gotest")
+          .get<number>("forceKillTimeout", 600) * 1000;
       const forceKill = setTimeout(() => {
         if (!child.killed) {
           killProcessTree(child, "SIGKILL");
@@ -324,7 +334,9 @@ export class WatchManager implements vscode.Disposable {
   }
 
   stopAll(): void {
-    this.outputChannel.info(`[watch] stopping all (${this.watchers.size} active)`);
+    this.outputChannel.info(
+      `[watch] stopping all (${this.watchers.size} active)`,
+    );
     for (const [scope, watcher] of this.watchers) {
       const recordId = this.watchRecordIds.get(scope);
       if (recordId) {

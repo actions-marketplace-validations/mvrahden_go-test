@@ -460,7 +460,9 @@ export class CoverageRunner implements vscode.Disposable {
       }
       cts.dispose();
       run.end();
-      this.outputChannel.info(`[coverage] run ${wasCancelled ? "cancelled" : "completed"}`);
+      this.outputChannel.info(
+        `[coverage] run ${wasCancelled ? "cancelled" : "completed"}`,
+      );
     }
   }
 

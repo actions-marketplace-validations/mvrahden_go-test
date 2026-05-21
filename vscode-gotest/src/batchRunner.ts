@@ -169,9 +169,13 @@ export async function executeBatch(config: BatchConfig): Promise<BatchResult> {
     }
 
     if (token.isCancellationRequested) {
-      const skippedPkgs = pkgInfos.filter((i) => !streamedPkgs.has(i.importPath));
+      const skippedPkgs = pkgInfos.filter(
+        (i) => !streamedPkgs.has(i.importPath),
+      );
       if (skippedPkgs.length > 0) {
-        outputChannel.info(`[${label}] cancelled, skipping ${skippedPkgs.length} remaining package(s)`);
+        outputChannel.info(
+          `[${label}] cancelled, skipping ${skippedPkgs.length} remaining package(s)`,
+        );
       }
       for (const info of skippedPkgs) {
         for (const item of info.items) {

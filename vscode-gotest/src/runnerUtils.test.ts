@@ -608,9 +608,9 @@ describe("computeWildcard", () => {
   });
 
   it("returns wildcard for two paths with common prefix", () => {
-    expect(
-      computeWildcard(["example.com/pkg/a", "example.com/pkg/b"]),
-    ).toEqual(["example.com/pkg/..."]);
+    expect(computeWildcard(["example.com/pkg/a", "example.com/pkg/b"])).toEqual(
+      ["example.com/pkg/..."],
+    );
   });
 
   it("finds deep common prefix", () => {
@@ -644,11 +644,7 @@ describe("computeWildcard", () => {
   it("groups by sub-directory when prefix equals module root", () => {
     expect(
       computeWildcard(
-        [
-          "example.com/pkg/a",
-          "example.com/pkg/b",
-          "example.com/internal/c",
-        ],
+        ["example.com/pkg/a", "example.com/pkg/b", "example.com/internal/c"],
         "example.com",
       ),
     ).toEqual(["example.com/pkg/...", "example.com/internal/c"]);
@@ -674,11 +670,7 @@ describe("computeWildcard", () => {
         ],
         "example.com",
       ),
-    ).toEqual([
-      "example.com",
-      "example.com/pkg/...",
-      "example.com/internal/c",
-    ]);
+    ).toEqual(["example.com", "example.com/pkg/...", "example.com/internal/c"]);
   });
 
   it("allows wildcard deeper than module root", () => {

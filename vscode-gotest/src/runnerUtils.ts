@@ -313,11 +313,18 @@ export function spawnTestProcess(
     });
 
     const cancelListener = token.onCancellationRequested(() => {
-      outputChannel.info(`[${label}] cancellation requested, sending SIGTERM (pid ${child.pid})`);
+      outputChannel.info(
+        `[${label}] cancellation requested, sending SIGTERM (pid ${child.pid})`,
+      );
       killProcessTree(child, "SIGTERM");
-      const killTimeout = vscode.workspace.getConfiguration("gotest").get<number>("forceKillTimeout", 600) * 1000;
+      const killTimeout =
+        vscode.workspace
+          .getConfiguration("gotest")
+          .get<number>("forceKillTimeout", 600) * 1000;
       forceKillTimer = setTimeout(() => {
-        outputChannel.warn(`[${label}] process did not exit after SIGTERM, sending SIGKILL`);
+        outputChannel.warn(
+          `[${label}] process did not exit after SIGTERM, sending SIGKILL`,
+        );
         killProcessTree(child, "SIGKILL");
       }, killTimeout);
     });

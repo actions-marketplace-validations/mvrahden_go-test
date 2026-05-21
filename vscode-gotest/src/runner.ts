@@ -225,7 +225,9 @@ export class TestRunner {
         this._onDidComplete.fire(this._lastJsonOutput);
       }
       run.end();
-      this.outputChannel.info(`[runner] run ${wasCancelled ? "cancelled" : "completed"}`);
+      this.outputChannel.info(
+        `[runner] run ${wasCancelled ? "cancelled" : "completed"}`,
+      );
     }
   }
 
