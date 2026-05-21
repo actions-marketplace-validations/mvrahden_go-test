@@ -273,6 +273,7 @@ export function spawnTestProcess(
     let stdout = "";
     let stderr = "";
     let lineBuffer = "";
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
 
     child.stdout.on("data", (data: Buffer) => {
       const chunk = data.toString();
@@ -296,10 +297,16 @@ export function spawnTestProcess(
     });
 
     const cancelListener = token.onCancellationRequested(() => {
+      outputChannel.info(`[${label}] cancellation requested, sending SIGTERM (pid ${child.pid})`);
       child.kill("SIGTERM");
+      forceKillTimer = setTimeout(() => {
+        outputChannel.warn(`[${label}] process did not exit after SIGTERM, sending SIGKILL`);
+        child.kill("SIGKILL");
+      }, 5000);
     });
 
     child.on("close", (code) => {
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       cancelListener.dispose();
       if (onStdoutLine) {
         const remaining = lineBuffer.trim();
@@ -318,6 +325,7 @@ export function spawnTestProcess(
     });
 
     child.on("error", (err: Error) => {
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       cancelListener.dispose();
       outputChannel.error(`[${label}] ${err.message}`);
       reject(err);

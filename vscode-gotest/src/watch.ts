@@ -164,14 +164,14 @@ class WatchProcess implements vscode.Disposable {
       const child = this.child;
       this.child = undefined;
 
+      this.outputChannel.info(`[watch] sending SIGTERM (pid ${child.pid})`);
       child.kill("SIGTERM");
 
-      // Force kill after 2s if still alive
       const forceKill = setTimeout(() => {
         if (!child.killed) {
           child.kill("SIGKILL");
         }
-      }, 2000);
+      }, 5000);
 
       child.on("close", () => {
         clearTimeout(forceKill);
@@ -300,6 +300,7 @@ export class WatchManager implements vscode.Disposable {
   }
 
   stop(pkgScope: string): void {
+    this.outputChannel.info(`[watch] stop requested for ${pkgScope}`);
     const recordId = this.watchRecordIds.get(pkgScope);
     if (recordId) {
       this.registry.cancel(recordId);
@@ -322,6 +323,7 @@ export class WatchManager implements vscode.Disposable {
   }
 
   stopAll(): void {
+    this.outputChannel.info(`[watch] stopping all (${this.watchers.size} active)`);
     for (const [scope, watcher] of this.watchers) {
       const recordId = this.watchRecordIds.get(scope);
       if (recordId) {
