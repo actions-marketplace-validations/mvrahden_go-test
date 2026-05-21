@@ -1,8 +1,23 @@
 import * as vscode from "vscode";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import type { GoTestController } from "./testController.js";
 import type { DiscoveryCache } from "./discovery.js";
 import { extractTestMessages, type TestEvent } from "./outputParser.js";
+
+export function killProcessTree(
+  child: ChildProcess,
+  signal: NodeJS.Signals = "SIGTERM",
+): void {
+  if (child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // process group already exited
+    }
+  }
+  child.kill(signal);
+}
 
 export function enqueueDescendants(
   run: vscode.TestRun,
@@ -269,6 +284,7 @@ export function spawnTestProcess(
     const child = spawn(bin, args, {
       cwd,
       env: env ? { ...process.env, ...env } : undefined,
+      detached: true,
     });
     let stdout = "";
     let stderr = "";
@@ -298,11 +314,12 @@ export function spawnTestProcess(
 
     const cancelListener = token.onCancellationRequested(() => {
       outputChannel.info(`[${label}] cancellation requested, sending SIGTERM (pid ${child.pid})`);
-      child.kill("SIGTERM");
+      killProcessTree(child, "SIGTERM");
+      const killTimeout = vscode.workspace.getConfiguration("gotest").get<number>("forceKillTimeout", 600) * 1000;
       forceKillTimer = setTimeout(() => {
         outputChannel.warn(`[${label}] process did not exit after SIGTERM, sending SIGKILL`);
-        child.kill("SIGKILL");
-      }, 5000);
+        killProcessTree(child, "SIGKILL");
+      }, killTimeout);
     });
 
     child.on("close", (code) => {

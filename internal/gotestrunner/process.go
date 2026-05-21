@@ -6,9 +6,17 @@ import (
 	"time"
 )
 
-// GracefulShutdownDelay is the time a child process has to exit after
-// receiving SIGTERM before it is forcibly killed.
-const GracefulShutdownDelay = 3 * time.Second
+const (
+	// GracefulShutdownDelay is the time a test process has to exit after
+	// receiving SIGTERM before it is forcibly killed. Must cover the
+	// longest fixture teardown (FixtureConfig.Timeout up to 5 min for
+	// container fixtures, SuiteConfig.SetupTimeout up to 5 min for AfterAll).
+	GracefulShutdownDelay = 5*time.Minute + 30*time.Second
+
+	// BuildShutdownDelay is the WaitDelay for build/compile commands that
+	// have no teardown work.
+	BuildShutdownDelay = 10 * time.Second
+)
 
 // SetProcessGroup configures cmd to run in its own process group and
 // to receive SIGTERM (then SIGKILL after GracefulShutdownDelay) when

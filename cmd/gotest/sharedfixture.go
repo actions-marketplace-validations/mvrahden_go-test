@@ -19,9 +19,10 @@ import (
 // The subprocess starts shared fixtures, writes JSON state to stdout,
 // then blocks until SIGTERM/SIGINT triggers teardown.
 type SharedFixtureProcess struct {
-	cmd       *exec.Cmd
-	stateFile string
-	done      chan struct{}
+	cmd              *exec.Cmd
+	stateFile        string
+	done             chan struct{}
+	teardownTimeout  time.Duration
 }
 
 // StateFile returns the path to the shared fixture state JSON file.
@@ -34,10 +35,14 @@ func (p *SharedFixtureProcess) Teardown() error {
 	if p.cmd == nil || p.cmd.Process == nil {
 		return nil
 	}
+	timeout := p.teardownTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM)
 	select {
 	case <-p.done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(timeout):
 		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 	}
 	return nil
@@ -66,6 +71,7 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", setupBin, setupFile)
 	buildCmd.Stderr = os.Stderr
 	gotestrunner.SetProcessGroup(buildCmd)
+	buildCmd.WaitDelay = gotestrunner.BuildShutdownDelay
 	if err := buildCmd.Run(); err != nil {
 		return nil, fmt.Errorf("build shared fixture setup: %w", err)
 	}
@@ -73,6 +79,7 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 	cmd := exec.CommandContext(ctx, setupBin)
 	cmd.Stderr = os.Stderr
 	gotestrunner.SetProcessGroup(cmd)
+	cmd.WaitDelay = 0 // Teardown() manages lifecycle via explicit SIGTERM/SIGKILL
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -111,6 +118,17 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 		return nil, fmt.Errorf("timed out after %v", setupTimeout)
 	}
 
+	teardownTimeout := setupTimeout
+	if budgetRaw, ok := state["_teardownBudget"]; ok {
+		var budgetStr string
+		if err := json.Unmarshal(budgetRaw, &budgetStr); err == nil {
+			if d, err := time.ParseDuration(budgetStr); err == nil && d > 0 {
+				teardownTimeout = d
+			}
+		}
+		delete(state, "_teardownBudget")
+	}
+
 	stateBytes, err := json.Marshal(state)
 	if err != nil {
 		cmd.Process.Kill()
@@ -129,5 +147,5 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 		close(done)
 	}()
 
-	return &SharedFixtureProcess{cmd: cmd, stateFile: stateFile, done: done}, nil
+	return &SharedFixtureProcess{cmd: cmd, stateFile: stateFile, done: done, teardownTimeout: teardownTimeout}, nil
 }

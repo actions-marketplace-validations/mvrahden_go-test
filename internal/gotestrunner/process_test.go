@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -109,8 +110,8 @@ func TestBuildSuiteCmd_SetsProcessGroup(t *testing.T) {
 			if cmd.Cancel == nil {
 				t.Fatal("expected Cancel to be set")
 			}
-			if cmd.WaitDelay != GracefulShutdownDelay {
-				t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, GracefulShutdownDelay)
+			if cmd.WaitDelay != 0 {
+				t.Errorf("WaitDelay = %v, want 0 (manual kill timer)", cmd.WaitDelay)
 			}
 		})
 	}
@@ -169,6 +170,89 @@ func TestSetProcessGroup_Cancel_NilProcess(t *testing.T) {
 	if err != nil {
 		t.Errorf("Cancel with nil Process returned error: %v", err)
 	}
+}
+
+func TestReadTeardownBudget(t *testing.T) {
+	t.Run("empty path returns default", func(t *testing.T) {
+		got := readTeardownBudget("")
+		if got != GracefulShutdownDelay {
+			t.Errorf("got %v, want %v", got, GracefulShutdownDelay)
+		}
+	})
+
+	t.Run("missing file returns default", func(t *testing.T) {
+		got := readTeardownBudget("/nonexistent/budget")
+		if got != GracefulShutdownDelay {
+			t.Errorf("got %v, want %v", got, GracefulShutdownDelay)
+		}
+	})
+
+	t.Run("valid duration", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "budget")
+		os.WriteFile(f, []byte("2m30s\n"), 0644)
+		got := readTeardownBudget(f)
+		want := 2*time.Minute + 30*time.Second
+		if got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("invalid duration returns default", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "budget")
+		os.WriteFile(f, []byte("not-a-duration"), 0644)
+		got := readTeardownBudget(f)
+		if got != GracefulShutdownDelay {
+			t.Errorf("got %v, want %v", got, GracefulShutdownDelay)
+		}
+	})
+
+	t.Run("zero duration returns default", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "budget")
+		os.WriteFile(f, []byte("0s"), 0644)
+		got := readTeardownBudget(f)
+		if got != GracefulShutdownDelay {
+			t.Errorf("got %v, want %v", got, GracefulShutdownDelay)
+		}
+	})
+}
+
+func TestBuildSuiteCmd_BudgetFileEnv(t *testing.T) {
+	ctx := context.Background()
+	env := []string{"PATH=/usr/bin"}
+
+	t.Run("sets GOTEST_TEARDOWN_BUDGET_FILE when BudgetFile is set", func(t *testing.T) {
+		target := SuiteTarget{
+			Package:    "example.com/pkg",
+			BinaryPath: "/tmp/pkg.test",
+			SuiteName:  "TestFoo",
+			BudgetFile: "/tmp/pkg.test.budget",
+		}
+		cmd := buildSuiteCmd(ctx, target, env, false)
+		found := false
+		for _, e := range cmd.Env {
+			if e == "GOTEST_TEARDOWN_BUDGET_FILE=/tmp/pkg.test.budget" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("GOTEST_TEARDOWN_BUDGET_FILE not found in cmd.Env")
+		}
+	})
+
+	t.Run("no GOTEST_TEARDOWN_BUDGET_FILE when BudgetFile is empty", func(t *testing.T) {
+		target := SuiteTarget{
+			Package:    "example.com/pkg",
+			BinaryPath: "/tmp/pkg.test",
+			SuiteName:  "TestFoo",
+		}
+		cmd := buildSuiteCmd(ctx, target, env, false)
+		for _, e := range cmd.Env {
+			if strings.HasPrefix(e, "GOTEST_TEARDOWN_BUDGET_FILE=") {
+				t.Errorf("unexpected GOTEST_TEARDOWN_BUDGET_FILE in env: %s", e)
+			}
+		}
+	})
 }
 
 func TestSetProcessGroup_WaitDelay_ForceKills(t *testing.T) {
