@@ -41,7 +41,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const discoveryService = new DiscoveryService(cache, outputChannel);
   const debugLauncher = new DebugLauncher(outputChannel);
   const testResultStore = new TestResultStore(context.storageUri);
-  const registryDir = context.storageUri?.fsPath ?? context.globalStorageUri.fsPath;
+  const registryDir =
+    context.storageUri?.fsPath ?? context.globalStorageUri.fsPath;
   const runRegistry = new RunRegistry(registryDir);
 
   let runner!: TestRunner;
@@ -109,7 +110,13 @@ export function activate(context: vscode.ExtensionContext): void {
     coverageStore.getDetails(uri.fsPath),
   );
 
-  runner = new TestRunner(controller, cache, outputChannel, runRegistry, coverageStore);
+  runner = new TestRunner(
+    controller,
+    cache,
+    outputChannel,
+    runRegistry,
+    coverageStore,
+  );
 
   const specViewRefreshDisposable = runner.onDidComplete((jsonOutput) => {
     specView.refresh(jsonOutput, "run");
@@ -550,7 +557,9 @@ async function initializeAsync(deps: {
   await runRegistry.load();
   const crashed = runRegistry.sweepStale();
   if (crashed.length > 0) {
-    outputChannel.info(`[registry] marked ${crashed.length} stale run(s) as crashed`);
+    outputChannel.info(
+      `[registry] marked ${crashed.length} stale run(s) as crashed`,
+    );
   }
   runRegistry.sweep();
   await runRegistry.save();

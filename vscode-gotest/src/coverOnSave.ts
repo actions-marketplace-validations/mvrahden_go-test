@@ -59,7 +59,9 @@ export class CoverOnSave implements vscode.Disposable {
     this.activeRecordId = recordId;
 
     let resolveRun!: () => void;
-    this.previousRunPromise = new Promise<void>((r) => { resolveRun = r; });
+    this.previousRunPromise = new Promise<void>((r) => {
+      resolveRun = r;
+    });
 
     const config = scopedConfig(workspaceDir);
     const testFlags = config.get<string[]>("testFlags") ?? [];

@@ -76,7 +76,11 @@ export class RunRegistry {
   sweep(): void {
     const now = Date.now();
     for (const [id, record] of this.records) {
-      if (record.status !== "running" && record.endedAt && now - record.endedAt > TTL_MS) {
+      if (
+        record.status !== "running" &&
+        record.endedAt &&
+        now - record.endedAt > TTL_MS
+      ) {
         this.records.delete(id);
       }
     }
@@ -90,7 +94,10 @@ export class RunRegistry {
 
   async load(): Promise<void> {
     try {
-      const data = await readFile(path.join(this.storageDir, REGISTRY_FILE), "utf-8");
+      const data = await readFile(
+        path.join(this.storageDir, REGISTRY_FILE),
+        "utf-8",
+      );
       const records: RunRecord[] = JSON.parse(data);
       this.records.clear();
       for (const r of records) {

@@ -58,7 +58,9 @@ export class TestRunner {
     let anyCoverOnRun = false;
 
     let resolveRun!: () => void;
-    this.previousRunPromise = new Promise<void>((r) => { resolveRun = r; });
+    this.previousRunPromise = new Promise<void>((r) => {
+      resolveRun = r;
+    });
 
     let recordId: string | undefined;
 

@@ -289,7 +289,9 @@ export class CoverageRunner implements vscode.Disposable {
     this.activeRecordId = recordId;
 
     let resolveRun!: () => void;
-    this.previousRunPromise = new Promise<void>((r) => { resolveRun = r; });
+    this.previousRunPromise = new Promise<void>((r) => {
+      resolveRun = r;
+    });
 
     try {
       for (const item of items) {
