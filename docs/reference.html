@@ -855,14 +855,14 @@ percentage = covered / total</div>
       <table class="ref-table">
         <thead><tr><th>Command</th><th>Effect</th></tr></thead>
         <tbody>
-          <tr><td><code>gotest ./...</code></td><td>Generate, test, cleanup. The default workflow.</td></tr>
+          <tr><td><code>gotest ./...</code></td><td>Generate overlays and run tests. The default workflow.</td></tr>
           <tr><td><code>gotest watch ./...</code></td><td>Re-run on file changes. Only affected packages re-run.</td></tr>
           <tr><td><code>gotest spec ./...</code></td><td>Run tests and render the behavioral specification.</td></tr>
           <tr><td><code>gotest lint ./...</code></td><td>Static analysis for test suites.</td></tr>
           <tr><td><code>gotest scaffold ./pkg/user.Svc</code></td><td>Generate a suite skeleton from any Go type.</td></tr>
           <tr><td><code>gotest migrate ./...</code></td><td>Convert testify/suite tests automatically.</td></tr>
           <tr><td><code>gotest generate ./...</code></td><td>Generate suite files without running tests.</td></tr>
-          <tr><td><code>gotest clean ./...</code></td><td>Remove generated files.</td></tr>
+          <tr><td><code>gotest clean ./...</code></td><td>Remove cached overlays (debugging).</td></tr>
           <tr><td><code>gotest refactor toggle-focus &lt;file&gt; &lt;id&gt;</code></td><td>Toggle <code>F_</code>/<code>X_</code> prefixes programmatically.</td></tr>
         </tbody>
       </table>
@@ -878,7 +878,7 @@ percentage = covered / total</div>
           <tr><td><code>--format=md</code></td><td>Markdown output for <code>spec</code> command.</td></tr>
           <tr><td><code>--output=&lt;path&gt;</code></td><td>Write formatted output to file.</td></tr>
           <tr><td><code>--no-color</code></td><td>Strip ANSI codes from output.</td></tr>
-          <tr><td><code>--debug</code></td><td>Keep generated files after the run.</td></tr>
+          <tr><td><code>--debug</code></td><td>Preserve overlays after the run for inspection.</td></tr>
           <tr><td><code>--setup-timeout=&lt;dur&gt;</code></td><td>Shared fixture setup deadline (default 1m).</td></tr>
           <tr><td><code>--debounce=&lt;dur&gt;</code></td><td>Watch mode debounce interval (default 200ms).</td></tr>
           <tr><td><code>--input=&lt;path&gt;</code></td><td>Read test output from file instead of running tests (<code>spec</code> command).</td></tr>

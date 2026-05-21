@@ -4,18 +4,21 @@
   <img src="https://raw.githubusercontent.com/mvrahden/go-test/main/docs/static/gopher.png" alt="gotest gopher" width="360" />
 </p>
 
-Specification-driven test suites for AI-assisted Go development.
+Specification-driven test suites for Go.
 
-[gotest](https://github.com/mvrahden/go-test) turns your tests into behavioral specifications — BDD-style suites that read as documentation, with structured output for AI-assisted workflows.
-This extension brings that workflow into VS Code: run, debug, watch, and verify your specifications without leaving the editor.
+[gotest](https://github.com/mvrahden/go-test) generates standard `go test` code from struct-based suites — BDD organization, lifecycle hooks, and structured output. No reflection, no runtime deps.
+This extension brings that into VS Code: run, debug, watch, and verify your suites without leaving the editor.
 
 ## Why this extension?
 
-AI writes code fast. The bottleneck is verification — you can't review AI-generated code line by line at the rate it's produced.
+Test Explorer shows your suites as **Package > Suite > Method > Subtest** — not a flat list of functions.
+Run or debug at any level. Coverage gutters track implementation progress. Watch mode streams results as you code.
 
-[gotest](https://github.com/mvrahden/go-test) closes that gap. Test suites become behavioral specifications. The Spec View renders your specification as an interactive tree with structured output. Coverage shows implementation progress. You define what the system should do — tests verify.
+The **Spec View** renders your test structure as a behavioral specification — a readable tree with pass/fail indicators, go-to-source navigation, and clipboard export. Your tests become documentation that's always in sync.
 
-- **Spec View** — Your quality dashboard. BDD-formatted specification tree with pass/fail/skip indicators, go-to-source navigation, and clipboard export. Paste specs into AI conversations as context.
+**AI-assisted workflows** — Paste specs into AI conversations as context. The clean exports feed well into LLM toolchains. You define what the system should do — the tests verify.
+
+- **Spec View** — Your quality dashboard. BDD-formatted specification tree with pass/fail/skip indicators, go-to-source navigation, and structured clipboard export.
 - **Suite-aware Test Explorer** — Navigate tests as Package > Suite > Method > Subtest, not a flat list of functions.
 - **Coverage gutters** — Track implementation progress with native VS Code coverage integration, per-statement highlighting, and persistent results across sessions.
 - **One-click Run and Debug** — CodeLens buttons above every suite and method. Debug with Delve, breakpoints included.
