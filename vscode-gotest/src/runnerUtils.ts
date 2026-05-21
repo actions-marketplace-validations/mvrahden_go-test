@@ -422,7 +422,7 @@ export function buildRunFilter(items: vscode.TestItem[]): string | undefined {
 export function computeWildcard(
   importPaths: string[],
   modulePath?: string,
-): string | undefined {
+): string[] | undefined {
   if (importPaths.length <= 1) return undefined;
 
   const split = importPaths.map((p) => p.split("/"));
@@ -439,9 +439,30 @@ export function computeWildcard(
 
   const prefix = first.slice(0, prefixLen).join("/");
   if (importPaths.every((p) => p === prefix)) return undefined;
-  if (modulePath && prefix === modulePath) return undefined;
+  if (!modulePath || prefix !== modulePath) return [prefix + "/..."];
 
-  return prefix + "/...";
+  const groups = new Map<string, string[]>();
+  for (const p of importPaths) {
+    const rest = p.slice(modulePath.length + 1);
+    const seg = rest.split("/")[0];
+    let group = groups.get(seg);
+    if (!group) {
+      group = [];
+      groups.set(seg, group);
+    }
+    group.push(p);
+  }
+
+  const result: string[] = [];
+  for (const [seg, paths] of groups) {
+    if (paths.length === 1) {
+      result.push(paths[0]);
+    } else {
+      result.push(modulePath + "/" + seg + "/...");
+    }
+  }
+
+  return result.length < importPaths.length ? result : undefined;
 }
 
 export function getPackageDir(
