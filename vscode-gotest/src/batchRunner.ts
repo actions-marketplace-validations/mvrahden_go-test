@@ -190,15 +190,6 @@ export async function executeBatch(config: BatchConfig): Promise<BatchResult> {
 
       for (const info of pkgInfos) {
         if (streamedPkgs.has(info.importPath)) {
-          if (stderrTrimmed) {
-            for (const item of info.items) {
-              run.appendOutput(
-                stderrTrimmed.replace(/\n/g, "\r\n") + "\r\n",
-                undefined,
-                item,
-              );
-            }
-          }
           continue;
         }
 
