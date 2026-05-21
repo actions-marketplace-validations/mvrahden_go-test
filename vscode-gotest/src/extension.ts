@@ -185,6 +185,7 @@ export function activate(context: vscode.ExtensionContext): void {
     controller,
     cache,
     runRegistry,
+    context,
   }).catch((err) => {
     outputChannel.error(`[activate] async initialization failed: ${err}`);
   });
@@ -518,6 +519,7 @@ async function initializeAsync(deps: {
   controller: GoTestController;
   cache: DiscoveryCache;
   runRegistry: RunRegistry;
+  context: vscode.ExtensionContext;
 }): Promise<void> {
   const {
     workspaceFolders,
@@ -528,6 +530,7 @@ async function initializeAsync(deps: {
     controller,
     cache,
     runRegistry,
+    context,
   } = deps;
 
   const firstDir = workspaceFolders[0].uri.fsPath;
@@ -549,6 +552,16 @@ async function initializeAsync(deps: {
   }
   runRegistry.sweep();
   await runRegistry.save();
+
+  const registrySaveInterval = setInterval(async () => {
+    runRegistry.sweep();
+    await runRegistry.save();
+  }, 60_000);
+  context.subscriptions.push({
+    dispose() {
+      clearInterval(registrySaveInterval);
+    },
+  });
 
   for (const folder of workspaceFolders) {
     await discoveryService.discover(folder.uri.fsPath);
