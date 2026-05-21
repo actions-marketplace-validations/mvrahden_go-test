@@ -5,6 +5,7 @@ import type { DiscoveryCache } from "./discovery.js";
 import { parseTestEvents, type TestEvent } from "./outputParser.js";
 import { buildCliCommand, formatCliCommand, type CliCommand } from "./cli.js";
 import { resolveTestItem, applyResults } from "./runnerUtils.js";
+import type { RunRegistry } from "./runRegistry.js";
 
 /**
  * Wraps a single `gotest watch -json <scope>` child process.
@@ -200,6 +201,7 @@ export class WatchManager implements vscode.Disposable {
       scope: string,
       cwd: string,
     ) => void,
+    private readonly registry: RunRegistry,
   ) {
     this.statusBar = vscode.window.createStatusBarItem(
       vscode.StatusBarAlignment.Left,

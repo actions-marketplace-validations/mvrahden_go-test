@@ -8,6 +8,7 @@ import type { CoverageStore } from "./coverageStore.js";
 import { buildCliCommand, formatCliCommand, scopedConfig } from "./cli.js";
 import { spawnTestProcess } from "./runnerUtils.js";
 import { runGoToolCoverFunc } from "./coverageUtils.js";
+import type { RunRegistry } from "./runRegistry.js";
 
 export class CoverOnSave implements vscode.Disposable {
   private activeRun: vscode.CancellationTokenSource | undefined;
@@ -19,6 +20,7 @@ export class CoverOnSave implements vscode.Disposable {
     private readonly cache: DiscoveryCache,
     private readonly store: CoverageStore,
     private readonly outputChannel: vscode.LogOutputChannel,
+    private readonly registry: RunRegistry,
   ) {}
 
   run(importPath: string): Promise<void> {

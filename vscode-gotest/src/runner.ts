@@ -11,6 +11,7 @@ import {
 } from "./runnerUtils.js";
 import type { CoverageStore } from "./coverageStore.js";
 import { executeBatch } from "./batchRunner.js";
+import type { RunRegistry } from "./runRegistry.js";
 
 export class TestRunner {
   private _lastJsonOutput = "";
@@ -22,6 +23,7 @@ export class TestRunner {
     private readonly controller: GoTestController,
     private readonly cache: DiscoveryCache,
     private readonly outputChannel: vscode.LogOutputChannel,
+    private readonly registry: RunRegistry,
     private readonly coverageStore?: CoverageStore,
   ) {}
 

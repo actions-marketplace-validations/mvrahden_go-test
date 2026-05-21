@@ -12,6 +12,7 @@ import {
   resolvePackageItems,
 } from "./runnerUtils.js";
 import { executeBatch } from "./batchRunner.js";
+import type { RunRegistry } from "./runRegistry.js";
 
 export interface ParsedFileCoverage {
   absPath: string;
@@ -247,6 +248,7 @@ export class CoverageRunner implements vscode.Disposable {
     private readonly store: CoverageStore,
     private readonly outputChannel: vscode.LogOutputChannel,
     private readonly onJsonOutput: (json: string) => void,
+    private readonly registry: RunRegistry,
   ) {}
 
   async run(
