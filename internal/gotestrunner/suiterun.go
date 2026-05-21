@@ -209,12 +209,14 @@ func buildSuiteCmd(ctx context.Context, target SuiteTarget, env []string, test2j
 		cmd := exec.CommandContext(ctx, "go", args...)
 		cmd.Env = env
 		cmd.Dir = target.Dir
+		SetProcessGroup(cmd)
 		return cmd
 	}
 
 	cmd := exec.CommandContext(ctx, target.BinaryPath, testArgs...)
 	cmd.Env = env
 	cmd.Dir = target.Dir
+	SetProcessGroup(cmd)
 	return cmd
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mvrahden/go-test/internal/gotestgen"
+	"github.com/mvrahden/go-test/internal/gotestrunner"
 )
 
 // SharedFixtureProcess manages a running shared fixture setup subprocess.
@@ -33,11 +34,11 @@ func (p *SharedFixtureProcess) Teardown() error {
 	if p.cmd == nil || p.cmd.Process == nil {
 		return nil
 	}
-	p.cmd.Process.Signal(syscall.SIGTERM)
+	syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM)
 	select {
 	case <-p.done:
 	case <-time.After(30 * time.Second):
-		p.cmd.Process.Kill()
+		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 	}
 	return nil
 }
@@ -64,12 +65,14 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 	setupBin := filepath.Join(sharedDir, "setup")
 	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", setupBin, setupFile)
 	buildCmd.Stderr = os.Stderr
+	gotestrunner.SetProcessGroup(buildCmd)
 	if err := buildCmd.Run(); err != nil {
 		return nil, fmt.Errorf("build shared fixture setup: %w", err)
 	}
 
 	cmd := exec.CommandContext(ctx, setupBin)
 	cmd.Stderr = os.Stderr
+	gotestrunner.SetProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
