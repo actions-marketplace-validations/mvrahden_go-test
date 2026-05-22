@@ -65,6 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
         (item) => getPackageDir(item, cache),
       ),
     (request, token) => coverageRunner.run(request, token),
+    (request, token) => runner.run(request, token, { updateSnapshots: true }),
   );
 
   controller.testController.refreshHandler = async () => {
@@ -407,6 +408,31 @@ function registerCommands(deps: {
           },
           wsDir,
         );
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      "gotest.updateSnapshots",
+      async (testId?: string) => {
+        const items: vscode.TestItem[] = [];
+        if (testId) {
+          const item = controller.findItem(testId);
+          if (item) items.push(item);
+        }
+        if (items.length === 0) {
+          controller.testController.items.forEach((item) => items.push(item));
+        }
+        if (items.length === 0) {
+          outputChannel.warn("[command] updateSnapshots: no test items");
+          return;
+        }
+        const cts = new vscode.CancellationTokenSource();
+        try {
+          const request = new vscode.TestRunRequest(items);
+          await runner.run(request, cts.token, { updateSnapshots: true });
+        } finally {
+          cts.dispose();
+        }
       },
     ),
 
