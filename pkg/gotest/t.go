@@ -200,8 +200,3 @@ func (t *T) Consistently(waitFor, tick time.Duration, fn func(poll *T)) {
 		}
 	}
 }
-
-func (t *T) MatchSnapshot(value any, name ...string) {
-	t.t.Helper()
-	matchSnapshot(t.t, 2, value, name...)
-}

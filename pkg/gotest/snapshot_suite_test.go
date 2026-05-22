@@ -16,7 +16,7 @@ func (s *SnapshotTestSuite) TestMatchSnapshot(t *gotest.T) {
 
 	t.When("no snapshot exists", func(w *gotest.T) {
 		w.It("creates a grouped snapshot file on first run", func(it *gotest.T) {
-			it.MatchSnapshot("hello world")
+			gotest.MatchSnapshot(it,"hello world")
 
 			snapPath := filepath.Join(snapDir, "TestSnapshotTestSuite_ext.snap")
 			data, err := os.ReadFile(snapPath)
@@ -27,14 +27,14 @@ func (s *SnapshotTestSuite) TestMatchSnapshot(t *gotest.T) {
 
 	t.When("snapshot already exists", func(w *gotest.T) {
 		w.It("matches multiple snapshots with dedup suffixes", func(it *gotest.T) {
-			it.MatchSnapshot("stable value")
-			it.MatchSnapshot("stable value")
+			gotest.MatchSnapshot(it,"stable value")
+			gotest.MatchSnapshot(it,"stable value")
 		})
 	})
 
 	t.When("custom name is provided", func(w *gotest.T) {
 		w.It("uses the custom name in the section key", func(it *gotest.T) {
-			it.MatchSnapshot("custom content", "my-snapshot")
+			gotest.MatchSnapshot(it,"custom content", "my-snapshot")
 
 			snapPath := filepath.Join(snapDir, "TestSnapshotTestSuite_ext.snap")
 			data, err := os.ReadFile(snapPath)
@@ -45,10 +45,10 @@ func (s *SnapshotTestSuite) TestMatchSnapshot(t *gotest.T) {
 
 	t.When("update mode is enabled", func(w *gotest.T) {
 		w.It("overwrites the existing snapshot", func(it *gotest.T) {
-			it.MatchSnapshot("original")
+			gotest.MatchSnapshot(it,"original")
 
 			it.T().Setenv("GOTEST_UPDATE_SNAPSHOTS", "1")
-			it.MatchSnapshot("updated")
+			gotest.MatchSnapshot(it,"updated")
 
 			snapPath := filepath.Join(snapDir, "TestSnapshotTestSuite_ext.snap")
 			data, err := os.ReadFile(snapPath)

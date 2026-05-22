@@ -20,6 +20,10 @@ type testingT interface {
 	FailNow()
 }
 
+func failf(t testingT, format string, args ...any) {
+	fail(t, fmt.Sprintf(format, args...), nil)
+}
+
 func fail(t testingT, msg string, msgAndArgs []any) {
 	if userMsg := assert.FormatMessage(msgAndArgs); userMsg != "" {
 		msg = msg + "\n  message: " + userMsg
