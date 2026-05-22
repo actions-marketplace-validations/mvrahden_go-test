@@ -417,9 +417,15 @@ function registerCommands(deps: {
         const items: vscode.TestItem[] = [];
         if (testId) {
           const item = controller.findItem(testId);
-          if (item) items.push(item);
-        }
-        if (items.length === 0) {
+          if (item) {
+            items.push(item);
+          } else {
+            outputChannel.warn(
+              `[command] updateSnapshots: item not found: ${testId}`,
+            );
+            return;
+          }
+        } else {
           controller.testController.items.forEach((item) => items.push(item));
         }
         if (items.length === 0) {

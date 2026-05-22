@@ -88,3 +88,18 @@ func TestValidateContent_ContainsHeader(t *testing.T) {
 	err := snapfile.ValidateContent("line\n=== SNAP injected ===\nmore\n")
 	gotest.Error(t, err)
 }
+
+func TestValidateContent_HeaderOnly(t *testing.T) {
+	err := snapfile.ValidateContent("=== SNAP injected ===")
+	gotest.Error(t, err)
+}
+
+func TestValidateContent_PartialHeaderMatch(t *testing.T) {
+	err := snapfile.ValidateContent("=== SNAP foo ===extra")
+	gotest.NoError(t, err)
+}
+
+func TestValidateContent_IncompleteHeader(t *testing.T) {
+	err := snapfile.ValidateContent("=== SNAP foo")
+	gotest.NoError(t, err)
+}

@@ -50,6 +50,33 @@ func TestIsExternalPackage(t *testing.T) {
 	})
 }
 
+func TestSplitTestName(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		wantTopLevel string
+		wantRest     string
+	}{
+		{"top-level only", "TestFoo", "TestFoo", ""},
+		{"with subtest", "TestFoo/bar", "TestFoo", "bar"},
+		{"nested subtests", "TestFoo/bar/baz", "TestFoo", "bar/baz"},
+		{"strips dedup suffix", "TestFoo/bar#01", "TestFoo", "bar"},
+		{"strips dedup suffix nested", "TestFoo/bar/baz#03", "TestFoo", "bar/baz"},
+		{"no dedup suffix", "TestFoo/bar#notnum", "TestFoo", "bar#notnum"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			topLevel, rest := splitTestName(tc.input)
+			if topLevel != tc.wantTopLevel {
+				t.Errorf("topLevel: want %q, got %q", tc.wantTopLevel, topLevel)
+			}
+			if rest != tc.wantRest {
+				t.Errorf("rest: want %q, got %q", tc.wantRest, rest)
+			}
+		})
+	}
+}
+
 func TestMatchSnapshot_PtestUsesNoSuffix(t *testing.T) {
 	snapDir := filepath.Join(thisDir(), "testdata", "__snapshots__")
 	t.Cleanup(func() { os.RemoveAll(snapDir) })

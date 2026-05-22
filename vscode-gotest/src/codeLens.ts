@@ -66,6 +66,9 @@ export class GoTestCodeLensProvider
     }
 
     const docText = document.getText();
+    const fileSuites = pkg.suites.filter(
+      (s) => path.join(pkg.dir, s.file) === docPath,
+    );
 
     for (const suite of pkg.suites) {
       const suiteInFile = path.join(pkg.dir, suite.file) === docPath;
@@ -117,9 +120,14 @@ export class GoTestCodeLensProvider
         );
 
         const startOffset = document.offsetAt(range.start);
+        const nextSuiteIdx = fileSuites.indexOf(suite) + 1;
+        const suiteEndLine =
+          nextSuiteIdx < fileSuites.length
+            ? fileSuites[nextSuiteIdx].line - 2
+            : document.lineCount - 1;
         const endLine = fileMethods[i + 1]
           ? fileMethods[i + 1].line - 2
-          : document.lineCount - 1;
+          : suiteEndLine;
         const endOffset = document.offsetAt(
           new vscode.Position(endLine, Number.MAX_SAFE_INTEGER),
         );

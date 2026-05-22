@@ -223,12 +223,19 @@ export class TestRunner {
             "Snapshot mismatch detected. Update snapshots?",
             "Update Snapshots",
           )
-          .then((choice) => {
+          .then(async (choice) => {
             if (choice !== "Update Snapshots") return;
             const cts2 = new vscode.CancellationTokenSource();
-            this.run(request, cts2.token, { updateSnapshots: true }).finally(
-              () => cts2.dispose(),
-            );
+            try {
+              await this.run(request, cts2.token, { updateSnapshots: true });
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              this.outputChannel.error(
+                `[runner] snapshot update failed: ${msg}`,
+              );
+            } finally {
+              cts2.dispose();
+            }
           });
       }
     } finally {
