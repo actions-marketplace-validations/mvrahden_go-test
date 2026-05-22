@@ -1,4 +1,4 @@
-package snapfile_test
+package snapfile_test //nolint:stdlib-test
 
 import (
 	"testing"

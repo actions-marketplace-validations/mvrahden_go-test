@@ -98,12 +98,7 @@ export class GoTestCodeLensProvider
 
       for (let i = 0; i < fileMethods.length; i++) {
         const method = fileMethods[i];
-        const range = new vscode.Range(
-          method.line - 1,
-          0,
-          method.line - 1,
-          0,
-        );
+        const range = new vscode.Range(method.line - 1, 0, method.line - 1, 0);
         const testPath = `${importPath}/${suite.name}/${method.name}`;
 
         lenses.push(

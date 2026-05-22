@@ -1,4 +1,4 @@
-package gotest_test
+package gotest_test //nolint:stdlib-test
 
 import (
 	"fmt"
