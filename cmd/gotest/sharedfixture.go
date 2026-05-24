@@ -49,7 +49,10 @@ func (p *SharedFixtureProcess) Teardown() error {
 
 // startSharedFixtures generates a shared setup binary in the overlay temp dir,
 // starts it as a subprocess, reads JSON state from stdout, writes it to a state
-// file, and returns a SharedFixtureProcess.
+// file, and returns a SharedFixtureProcess. setupTimeout is a total budget for
+// all shared fixtures to complete setup; 0 means no external deadline (each
+// fixture's own SharedFixtureConfig().Timeout governs); any negative value
+// explicitly disables the deadline.
 func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestgen.SharedFixtureInfo, setupTimeout time.Duration) (*SharedFixtureProcess, error) {
 	src, err := gotestgen.GenerateSharedSetup(fixtures)
 	if err != nil {
@@ -101,20 +104,34 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 	}()
 
 	var state map[string]json.RawMessage
-	select {
-	case res := <-decoded:
-		if res.err != nil {
+	if setupTimeout > 0 {
+		select {
+		case res := <-decoded:
+			if res.err != nil {
+				cmd.Process.Kill()
+				return nil, fmt.Errorf("read shared fixture state: %w", res.err)
+			}
+			state = res.state
+		case <-ctx.Done():
 			cmd.Process.Kill()
-			return nil, fmt.Errorf("read shared fixture state: %w", res.err)
+			return nil, fmt.Errorf("cancelled: %w", ctx.Err())
+		case <-time.After(setupTimeout):
+			cmd.Process.Kill()
+			io.Copy(io.Discard, stdout)
+			return nil, fmt.Errorf("timed out after %v", setupTimeout)
 		}
-		state = res.state
-	case <-ctx.Done():
-		cmd.Process.Kill()
-		return nil, fmt.Errorf("cancelled: %w", ctx.Err())
-	case <-time.After(setupTimeout):
-		cmd.Process.Kill()
-		io.Copy(io.Discard, stdout)
-		return nil, fmt.Errorf("timed out after %v", setupTimeout)
+	} else {
+		select {
+		case res := <-decoded:
+			if res.err != nil {
+				cmd.Process.Kill()
+				return nil, fmt.Errorf("read shared fixture state: %w", res.err)
+			}
+			state = res.state
+		case <-ctx.Done():
+			cmd.Process.Kill()
+			return nil, fmt.Errorf("cancelled: %w", ctx.Err())
+		}
 	}
 
 	teardownTimeout := setupTimeout

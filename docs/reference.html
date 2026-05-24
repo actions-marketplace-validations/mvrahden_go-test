@@ -779,7 +779,40 @@ InfraFixture.AfterAll</div>
     <!-- 6. Configuration -->
     <section class="ref-section" id="configuration">
       <h2>Configuration</h2>
-      <p class="lead">Sensible defaults. Override only what you need via marker methods.</p>
+      <p class="lead">Sensible defaults. Override only what you need — via project file, marker methods, or CLI flags.</p>
+
+      <h3>Precedence</h3>
+      <p>There are two independent configuration scopes:</p>
+      <p><strong>Project scope</strong> — CLI flags override the project file. These control the test runner itself:</p>
+      <div class="diagram">1. CLI flags            <span class="d">--setup-timeout=2m, --min=80, --debounce=500ms</span>
+2. Project file         <span class="d">.gotest.yml — checked into the repo</span></div>
+      <p><strong>Code scope</strong> — marker methods override built-in presets. These control individual suites and fixtures:</p>
+      <div class="diagram">1. In-code config       <span class="d">SuiteConfig(), FixtureConfig(), SharedFixtureConfig()</span>
+2. Built-in defaults    <span class="d">DefaultSuiteConfig(), DefaultFixtureConfig()</span></div>
+      <p>The two scopes are independent — they don't override each other. For shared fixture timeouts specifically, <code>--setup-timeout</code> is an outer wall-clock budget on the entire setup phase, while <code>SharedFixtureConfig().Timeout</code> is an inner per-fixture deadline. Both run concurrently — whichever fires first wins. When <code>--setup-timeout</code> is omitted, only the per-fixture timeouts apply.</p>
+
+      <h3>Project file — <code>.gotest.yml</code></h3>
+      <p>Place a <code>.gotest.yml</code> in your project root. gotest finds it by walking up from the working directory, stopping at the first match or at a <code>go.mod</code> boundary.</p>
+      <table class="ref-table">
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>tags</code></td><td>string</td><td><em>none</em></td><td>Build tags, comma-separated (e.g. <code>"integration,e2e"</code>).</td></tr>
+          <tr><td><code>setup-timeout</code></td><td>duration</td><td><em>none</em></td><td>Total budget for all shared fixture setup. Omit to let each fixture's own config govern. Use a negative value (e.g. <code>-1s</code>) to disable (<code>--setup-timeout</code>).</td></tr>
+          <tr><td><code>min-coverage</code></td><td>int</td><td>0 (off)</td><td>Minimum coverage percentage, 0–100 (<code>--min</code>).</td></tr>
+          <tr><td><code>debounce</code></td><td>duration</td><td>200ms</td><td>Watch mode re-run delay (<code>--debounce</code>).</td></tr>
+          <tr><td><code>lint.skip</code></td><td>[string]</td><td><em>none</em></td><td>Lint rules to disable: <code>stdlib-test</code>, <code>testify</code>.</td></tr>
+        </tbody>
+      </table>
+      <div class="code-block">
+        <div class="code-label">.gotest.yml</div>
+        <pre>tags: integration
+setup-timeout: 2m
+min-coverage: 80
+debounce: 500ms
+lint:
+  skip:
+    - testify</pre>
+      </div>
 
       <h3>Suite configuration</h3>
       <table class="ref-table">
@@ -879,7 +912,7 @@ percentage = covered / total</div>
           <tr><td><code>--output=&lt;path&gt;</code></td><td>Write formatted output to file.</td></tr>
           <tr><td><code>--no-color</code></td><td>Strip ANSI codes from output.</td></tr>
           <tr><td><code>--debug</code></td><td>Preserve overlays after the run for inspection.</td></tr>
-          <tr><td><code>--setup-timeout=&lt;dur&gt;</code></td><td>Shared fixture setup deadline (default 1m).</td></tr>
+          <tr><td><code>--setup-timeout=&lt;dur&gt;</code></td><td>Total budget for all shared fixture setup. Omit to let each fixture's own config govern. Use a negative value (e.g. <code>-1s</code>) to disable.</td></tr>
           <tr><td><code>--debounce=&lt;dur&gt;</code></td><td>Watch mode debounce interval (default 200ms).</td></tr>
           <tr><td><code>--input=&lt;path&gt;</code></td><td>Read test output from file instead of running tests (<code>spec</code> command).</td></tr>
         </tbody>
