@@ -522,3 +522,62 @@ export function resolvePackageItems(
     }
   }
 }
+
+export function resolveAncestorItems(
+  run: vscode.TestRun,
+  controller: GoTestController,
+): void {
+  controller.testController.items.forEach((item) => {
+    resolveItemRecursive(run, item, controller);
+  });
+}
+
+function resolveItemRecursive(
+  run: vscode.TestRun,
+  item: vscode.TestItem,
+  controller: GoTestController,
+): { anyFailed: boolean; anyResolved: boolean } {
+  if (item.tags.some((t) => t.id === "package")) {
+    const result = controller.getResult(item.id);
+    if (result) {
+      return { anyFailed: result.status === "fail", anyResolved: true };
+    }
+    return checkSubtreeResults(item, controller);
+  }
+
+  let anyFailed = false;
+  let anyResolved = false;
+  item.children.forEach((child) => {
+    const r = resolveItemRecursive(run, child, controller);
+    if (r.anyResolved) anyResolved = true;
+    if (r.anyFailed) anyFailed = true;
+  });
+
+  if (anyResolved) {
+    if (anyFailed) {
+      run.failed(item, []);
+    } else {
+      run.passed(item);
+    }
+  }
+
+  return { anyFailed, anyResolved };
+}
+
+function checkSubtreeResults(
+  item: vscode.TestItem,
+  controller: GoTestController,
+): { anyFailed: boolean; anyResolved: boolean } {
+  const result = controller.getResult(item.id);
+  if (result) {
+    return { anyFailed: result.status === "fail", anyResolved: true };
+  }
+  let anyFailed = false;
+  let anyResolved = false;
+  item.children.forEach((child) => {
+    const r = checkSubtreeResults(child, controller);
+    if (r.anyResolved) anyResolved = true;
+    if (r.anyFailed) anyFailed = true;
+  });
+  return { anyFailed, anyResolved };
+}

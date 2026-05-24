@@ -40,6 +40,7 @@ import {
   applyResults,
   enqueueDescendants,
   resolvePackageItems,
+  resolveAncestorItems,
 } from "./runnerUtils.js";
 import { buildPathTrie, collapsePathTrie, type PathNode } from "./pathTrie.js";
 
@@ -783,5 +784,167 @@ describe("resolvePackageItems", () => {
     resolvePackageItems(run as any, [pkg as any], controller as any);
     expect(run.passed).not.toHaveBeenCalled();
     expect(run.failed).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveAncestorItems", () => {
+  function makeAncestorFixture() {
+    const dir = createItem("dir:internal", "internal", undefined);
+    const pkg = createItem("example.com/internal/auth", "auth", dir, [
+      { id: "package" },
+    ]);
+    const suite = createItem(
+      "example.com/internal/auth/AuthSuite",
+      "AuthSuite",
+      pkg,
+    );
+    const method = createItem(
+      "example.com/internal/auth/AuthSuite/TestLogin",
+      "TestLogin",
+      suite,
+    );
+
+    const run = {
+      passed: vi.fn(),
+      failed: vi.fn(),
+    };
+
+    const controller = {
+      getResult: vi.fn((_id: string) => undefined as any),
+      testController: {
+        items: new Map<string, MockTestItem>([["dir:internal", dir]]),
+      },
+    };
+
+    return { dir, pkg, suite, method, run, controller };
+  }
+
+  it("marks dir passed when all packages passed", () => {
+    const { dir, run, controller } = makeAncestorFixture();
+    controller.getResult.mockImplementation((id: string) => {
+      if (id === "example.com/internal/auth")
+        return { status: "pass" as const, duration: 500 };
+      return undefined;
+    });
+
+    resolveAncestorItems(run as any, controller as any);
+
+    expect(run.passed).toHaveBeenCalledTimes(1);
+    expect(run.passed).toHaveBeenCalledWith(dir);
+    expect(run.failed).not.toHaveBeenCalled();
+  });
+
+  it("marks dir failed when any package failed", () => {
+    const { dir, run, controller } = makeAncestorFixture();
+    controller.getResult.mockImplementation((id: string) => {
+      if (id === "example.com/internal/auth")
+        return { status: "fail" as const, duration: 500 };
+      return undefined;
+    });
+
+    resolveAncestorItems(run as any, controller as any);
+
+    expect(run.failed).toHaveBeenCalledWith(dir, []);
+    expect(run.passed).not.toHaveBeenCalled();
+  });
+
+  it("marks dir failed when one of multiple packages failed", () => {
+    const dir = createItem("dir:pkg", "pkg", undefined);
+    const pkgA = createItem("example.com/pkg/a", "a", dir, [{ id: "package" }]);
+    const pkgB = createItem("example.com/pkg/b", "b", dir, [{ id: "package" }]);
+
+    const run = { passed: vi.fn(), failed: vi.fn() };
+    const controller = {
+      getResult: vi.fn((id: string) => {
+        if (id === "example.com/pkg/a")
+          return { status: "pass" as const, duration: 100 };
+        if (id === "example.com/pkg/b")
+          return { status: "fail" as const, duration: 200 };
+        return undefined;
+      }),
+      testController: {
+        items: new Map<string, MockTestItem>([["dir:pkg", dir]]),
+      },
+    };
+
+    resolveAncestorItems(run as any, controller as any);
+
+    expect(run.failed).toHaveBeenCalledWith(dir, []);
+    expect(run.passed).not.toHaveBeenCalled();
+  });
+
+  it("propagates through nested directory levels", () => {
+    const root = createItem("dir:src", "src", undefined);
+    const sub = createItem("dir:src/internal", "internal", root);
+    const pkg = createItem("example.com/src/internal/svc", "svc", sub, [
+      { id: "package" },
+    ]);
+
+    const run = { passed: vi.fn(), failed: vi.fn() };
+    const controller = {
+      getResult: vi.fn((id: string) => {
+        if (id === "example.com/src/internal/svc")
+          return { status: "fail" as const, duration: 300 };
+        return undefined;
+      }),
+      testController: {
+        items: new Map<string, MockTestItem>([["dir:src", root]]),
+      },
+    };
+
+    resolveAncestorItems(run as any, controller as any);
+
+    expect(run.failed).toHaveBeenCalledTimes(2);
+    expect(run.failed).toHaveBeenCalledWith(root, []);
+    expect(run.failed).toHaveBeenCalledWith(sub, []);
+  });
+
+  it("propagates through wsFolder items", () => {
+    const wsFolder = createItem("wsFolder:myproject", "myproject", undefined);
+    const pkg = createItem("example.com/root", "root", wsFolder, [
+      { id: "package" },
+    ]);
+
+    const run = { passed: vi.fn(), failed: vi.fn() };
+    const controller = {
+      getResult: vi.fn((id: string) => {
+        if (id === "example.com/root")
+          return { status: "pass" as const, duration: 100 };
+        return undefined;
+      }),
+      testController: {
+        items: new Map<string, MockTestItem>([
+          ["wsFolder:myproject", wsFolder],
+        ]),
+      },
+    };
+
+    resolveAncestorItems(run as any, controller as any);
+
+    expect(run.passed).toHaveBeenCalledWith(wsFolder);
+  });
+
+  it("does not set state when no descendants have results", () => {
+    const { dir, run, controller } = makeAncestorFixture();
+
+    resolveAncestorItems(run as any, controller as any);
+
+    expect(run.passed).not.toHaveBeenCalled();
+    expect(run.failed).not.toHaveBeenCalled();
+  });
+
+  it("derives dir state from suite/method results when package has no result", () => {
+    const { dir, run, controller } = makeAncestorFixture();
+    controller.getResult.mockImplementation((id: string) => {
+      if (id === "example.com/internal/auth/AuthSuite/TestLogin")
+        return { status: "fail" as const, duration: 50 };
+      return undefined;
+    });
+
+    resolveAncestorItems(run as any, controller as any);
+
+    expect(run.failed).toHaveBeenCalledTimes(1);
+    expect(run.failed).toHaveBeenCalledWith(dir, []);
+    expect(run.passed).not.toHaveBeenCalled();
   });
 });
