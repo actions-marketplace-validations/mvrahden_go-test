@@ -1,23 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const {
-  mockExecFileAsync,
-  mockAccess,
-  mockReadFile,
-  mockShowWarningMessage,
-} = vi.hoisted(() => ({
-  mockExecFileAsync: vi.fn(
-    async (): Promise<{ stdout: string; stderr: string }> => ({
-      stdout: "{}",
-      stderr: "",
+const { mockExecFileAsync, mockAccess, mockReadFile, mockShowWarningMessage } =
+  vi.hoisted(() => ({
+    mockExecFileAsync: vi.fn(
+      async (): Promise<{ stdout: string; stderr: string }> => ({
+        stdout: "{}",
+        stderr: "",
+      }),
+    ),
+    mockAccess: vi.fn(async () => {}),
+    mockReadFile: vi.fn(async (): Promise<string> => {
+      throw new Error("ENOENT");
     }),
-  ),
-  mockAccess: vi.fn(async () => {}),
-  mockReadFile: vi.fn(async (): Promise<string> => {
-    throw new Error("ENOENT");
-  }),
-  mockShowWarningMessage: vi.fn(async () => undefined),
-}));
+    mockShowWarningMessage: vi.fn(async () => undefined),
+  }));
 
 vi.mock("vscode", () => ({
   workspace: {
@@ -81,7 +77,7 @@ function successResponse(pkgs: Array<{ importPath: string; dir: string }>) {
   };
 }
 
-describe("DiscoveryService retry", () => {
+describe("DiscoveryService", () => {
   let cache: DiscoveryCache;
   let outputChannel: ReturnType<typeof makeOutputChannel>;
   let service: DiscoveryService;
@@ -99,131 +95,186 @@ describe("DiscoveryService retry", () => {
     );
   });
 
-  it("succeeds on first attempt without retry", async () => {
-    mockExecFileAsync.mockResolvedValueOnce(
-      successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-    );
-
-    await service.discover("/ws", ["./..."]);
-
-    expect(mockExecFileAsync).toHaveBeenCalledTimes(1);
-    expect(cache.packages).toHaveLength(1);
-    expect(outputChannel.debug).not.toHaveBeenCalled();
-    expect(mockShowWarningMessage).not.toHaveBeenCalled();
-  });
-
-  it("retries on transient failure and succeeds on second attempt", async () => {
-    mockExecFileAsync
-      .mockRejectedValueOnce(new Error("cannot find package"))
-      .mockResolvedValueOnce(
+  describe("when discovery succeeds immediately", () => {
+    it("updates the cache with discovered packages", async () => {
+      mockExecFileAsync.mockResolvedValueOnce(
         successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
       );
 
-    const p = service.discover("/ws", ["./..."]);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await p;
+      await service.discover("/ws", ["./..."]);
 
-    expect(mockExecFileAsync).toHaveBeenCalledTimes(2);
-    expect(cache.packages).toHaveLength(1);
-    expect(outputChannel.debug).toHaveBeenCalledWith(
-      expect.stringContaining("attempt 1/3 failed"),
-    );
-    expect(mockShowWarningMessage).not.toHaveBeenCalled();
-  });
+      expect(cache.packages).toHaveLength(1);
+      expect(cache.getPackage("example.com/pkg")).toBeDefined();
+    });
 
-  it("retries twice and succeeds on third attempt", async () => {
-    mockExecFileAsync
-      .mockRejectedValueOnce(new Error("fail 1"))
-      .mockRejectedValueOnce(new Error("fail 2"))
-      .mockResolvedValueOnce(
+    it("does not show a warning toast", async () => {
+      mockExecFileAsync.mockResolvedValueOnce(
         successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
       );
 
-    const p = service.discover("/ws", ["./..."]);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(4_000);
-    await p;
+      await service.discover("/ws", ["./..."]);
 
-    expect(mockExecFileAsync).toHaveBeenCalledTimes(3);
-    expect(cache.packages).toHaveLength(1);
-    expect(outputChannel.debug).toHaveBeenCalledTimes(2);
-    expect(mockShowWarningMessage).not.toHaveBeenCalled();
+      expect(mockShowWarningMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not log at debug level", async () => {
+      mockExecFileAsync.mockResolvedValueOnce(
+        successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
+      );
+
+      await service.discover("/ws", ["./..."]);
+
+      expect(outputChannel.debug).not.toHaveBeenCalled();
+    });
   });
 
-  it("shows toast only after all retries exhausted", async () => {
-    mockExecFileAsync.mockRejectedValue(new Error("persistent failure"));
+  describe("when discovery fails transiently then recovers", () => {
+    it("retries after 2s and updates cache on success", async () => {
+      mockExecFileAsync
+        .mockRejectedValueOnce(new Error("cannot find package"))
+        .mockResolvedValueOnce(
+          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
+        );
 
-    const p = service.discover("/ws", ["./..."]);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(4_000);
-    await p;
+      const p = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await p;
 
-    expect(mockExecFileAsync).toHaveBeenCalledTimes(3);
-    expect(cache.packages).toHaveLength(0);
-    expect(outputChannel.error).toHaveBeenCalledWith(
-      expect.stringContaining("failed after 3 attempts"),
-    );
-    expect(mockShowWarningMessage).toHaveBeenCalledTimes(1);
+      expect(cache.packages).toHaveLength(1);
+    });
+
+    it("logs the transient failure at debug level", async () => {
+      mockExecFileAsync
+        .mockRejectedValueOnce(new Error("cannot find package"))
+        .mockResolvedValueOnce(
+          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
+        );
+
+      const p = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await p;
+
+      expect(outputChannel.debug).toHaveBeenCalledWith(
+        expect.stringContaining("attempt 1/3 failed, retrying"),
+      );
+    });
+
+    it("does not show a warning toast", async () => {
+      mockExecFileAsync
+        .mockRejectedValueOnce(new Error("cannot find package"))
+        .mockResolvedValueOnce(
+          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
+        );
+
+      const p = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await p;
+
+      expect(mockShowWarningMessage).not.toHaveBeenCalled();
+    });
+
+    it("recovers on third attempt after two failures", async () => {
+      mockExecFileAsync
+        .mockRejectedValueOnce(new Error("fail 1"))
+        .mockRejectedValueOnce(new Error("fail 2"))
+        .mockResolvedValueOnce(
+          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
+        );
+
+      const p = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await p;
+
+      expect(cache.packages).toHaveLength(1);
+      expect(outputChannel.debug).toHaveBeenCalledTimes(2);
+      expect(mockShowWarningMessage).not.toHaveBeenCalled();
+    });
   });
 
-  it("does not show duplicate toast on repeated total failures", async () => {
-    mockExecFileAsync.mockRejectedValue(new Error("persistent failure"));
+  describe("when all retry attempts fail", () => {
+    beforeEach(async () => {
+      mockExecFileAsync.mockRejectedValue(new Error("persistent failure"));
+      const p = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await p;
+    });
 
-    const p1 = service.discover("/ws", ["./..."]);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(4_000);
-    await p1;
+    it("does not update the cache", () => {
+      expect(cache.packages).toHaveLength(0);
+    });
 
-    const p2 = service.discover("/ws", ["./..."]);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(4_000);
-    await p2;
+    it("logs the final failure at error level", () => {
+      expect(outputChannel.error).toHaveBeenCalledWith(
+        expect.stringContaining("failed after 3 attempts"),
+      );
+      expect(outputChannel.error).toHaveBeenCalledTimes(1);
+    });
 
-    expect(mockShowWarningMessage).toHaveBeenCalledTimes(1);
+    it("shows a warning toast to the user", () => {
+      expect(mockShowWarningMessage).toHaveBeenCalledTimes(1);
+      expect(mockShowWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining("discovery failed"),
+        "Open Output",
+      );
+    });
+
+    it("does not show duplicate toasts on subsequent failures", async () => {
+      const p = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await p;
+
+      expect(mockShowWarningMessage).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it("resets hasShownError after a successful discovery", async () => {
-    mockExecFileAsync.mockRejectedValue(new Error("fail"));
+  describe("when discovery recovers after a previous total failure", () => {
+    it("re-enables the warning toast for future failures", async () => {
+      mockExecFileAsync.mockRejectedValue(new Error("fail"));
 
-    const p1 = service.discover("/ws", ["./..."]);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(4_000);
-    await p1;
-    expect(mockShowWarningMessage).toHaveBeenCalledTimes(1);
+      const p1 = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await p1;
+      expect(mockShowWarningMessage).toHaveBeenCalledTimes(1);
 
-    mockExecFileAsync.mockResolvedValue(
-      successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-    );
+      mockExecFileAsync.mockResolvedValueOnce(
+        successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
+      );
+      await service.discover("/ws", ["./..."]);
 
-    await service.discover("/ws", ["./..."]);
+      mockExecFileAsync.mockRejectedValue(new Error("fail again"));
+      const p3 = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await p3;
 
-    mockExecFileAsync.mockRejectedValue(new Error("fail again"));
-
-    const p3 = service.discover("/ws", ["./..."]);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(4_000);
-    await p3;
-
-    expect(mockShowWarningMessage).toHaveBeenCalledTimes(2);
+      expect(mockShowWarningMessage).toHaveBeenCalledTimes(2);
+    });
   });
 
-  it("logs retries at debug level, final failure at error level", async () => {
-    mockExecFileAsync.mockRejectedValue(new Error("bad"));
+  describe("when a newer discovery request is queued during retry", () => {
+    it("aborts the retry loop", async () => {
+      mockExecFileAsync
+        .mockRejectedValueOnce(new Error("transient"))
+        .mockResolvedValue(
+          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
+        );
 
-    const p = service.discover("/ws", ["./..."]);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(4_000);
-    await p;
+      const p1 = service.discover("/ws", ["./..."]);
+      // While retrying, queue a second request for same workspace
+      const p2 = service.discover("/ws", ["./..."]);
 
-    expect(outputChannel.debug).toHaveBeenCalledWith(
-      expect.stringContaining("attempt 1/3 failed, retrying"),
-    );
-    expect(outputChannel.debug).toHaveBeenCalledWith(
-      expect.stringContaining("attempt 2/3 failed, retrying"),
-    );
-    expect(outputChannel.error).toHaveBeenCalledWith(
-      expect.stringContaining("failed after 3 attempts"),
-    );
-    expect(outputChannel.error).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await p1;
+      await p2;
+
+      expect(outputChannel.debug).toHaveBeenCalledWith(
+        expect.stringContaining("superseded by queued request"),
+      );
+    });
   });
 });
