@@ -886,7 +886,7 @@ func (s *AssertionsTestSuite) TestEventually(t *gotest.T) {
 		w.It("passes", func(it *gotest.T) {
 			m := newMock()
 			count := 0
-			gotest.Eventually(m, 50*time.Millisecond, 1*time.Millisecond, func(poll *gotest.T) {
+			gotest.Eventually(m, 50*time.Millisecond, 1*time.Millisecond, func(poll *gotest.R) {
 				count++
 				gotest.GreaterOrEqual(poll, count, 3)
 			})
@@ -897,7 +897,7 @@ func (s *AssertionsTestSuite) TestEventually(t *gotest.T) {
 	t.When("condition never becomes true", func(w *gotest.T) {
 		w.It("fails after timeout", func(it *gotest.T) {
 			m := newMock()
-			gotest.Eventually(m, 10*time.Millisecond, 1*time.Millisecond, func(poll *gotest.T) {
+			gotest.Eventually(m, 10*time.Millisecond, 1*time.Millisecond, func(poll *gotest.R) {
 				gotest.True(poll, false)
 			})
 			gotest.True(it, m.failed)
@@ -909,7 +909,7 @@ func (s *AssertionsTestSuite) TestConsistently(t *gotest.T) {
 	t.When("condition stays true for duration", func(w *gotest.T) {
 		w.It("passes", func(it *gotest.T) {
 			m := newMock()
-			gotest.Consistently(m, 20*time.Millisecond, 1*time.Millisecond, func(poll *gotest.T) {
+			gotest.Consistently(m, 20*time.Millisecond, 1*time.Millisecond, func(poll *gotest.R) {
 				gotest.True(poll, true)
 			})
 			gotest.False(it, m.failed)
@@ -920,7 +920,7 @@ func (s *AssertionsTestSuite) TestConsistently(t *gotest.T) {
 		w.It("fails", func(it *gotest.T) {
 			m := newMock()
 			count := 0
-			gotest.Consistently(m, 50*time.Millisecond, 1*time.Millisecond, func(poll *gotest.T) {
+			gotest.Consistently(m, 50*time.Millisecond, 1*time.Millisecond, func(poll *gotest.R) {
 				count++
 				gotest.Less(poll, count, 3)
 			})
