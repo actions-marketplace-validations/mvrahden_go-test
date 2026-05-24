@@ -188,10 +188,14 @@ export async function executeBatch(config: BatchConfig): Promise<BatchResult> {
     }
 
     if (result.exitCode !== 0) {
-      const stderrTrimmed = result.stderr.trim();
+      const stderrFiltered = result.stderr
+        .split("\n")
+        .filter((line) => !/^exit status \d+$/.test(line.trim()))
+        .join("\n")
+        .trim();
 
-      if (stderrTrimmed) {
-        run.appendOutput(stderrTrimmed.replace(/\n/g, "\r\n") + "\r\n");
+      if (stderrFiltered) {
+        run.appendOutput(stderrFiltered.replace(/\n/g, "\r\n") + "\r\n");
       }
 
       for (const info of pkgInfos) {
@@ -200,7 +204,7 @@ export async function executeBatch(config: BatchConfig): Promise<BatchResult> {
         }
 
         const diagnostic = [
-          stderrTrimmed,
+          stderrFiltered,
           result.stdout.trim(),
           `exit code ${result.exitCode}`,
         ]

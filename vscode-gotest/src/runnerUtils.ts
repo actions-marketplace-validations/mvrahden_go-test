@@ -204,6 +204,9 @@ export function applyResults(
 
   for (const event of events) {
     if (event.Action === "output" && event.Output) {
+      if (!event.Test && /^exit status \d+\n?$/.test(event.Output)) {
+        continue;
+      }
       const line = event.Output.replace(/\n$/, "\r\n");
       const testItem = event.Test
         ? resolveTestItem(controller, event.Test, importPath)
