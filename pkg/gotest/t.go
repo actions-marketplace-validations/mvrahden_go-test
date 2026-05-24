@@ -15,15 +15,11 @@ func NewT(t *testing.T) *T {
 }
 
 type T struct {
-	t         *testing.T
-	ctx       context.Context
-	collector *collectingT
+	t   *testing.T
+	ctx context.Context
 }
 
 func (t *T) T() *testing.T {
-	if t.t == nil {
-		panic("gotest: T() called but no underlying *testing.T is available")
-	}
 	return t.t
 }
 
@@ -41,19 +37,11 @@ func NewTWithDeadline(t *testing.T, timeout time.Duration) *T {
 }
 
 func (t *T) Errorf(format string, args ...any) {
-	if t.collector != nil {
-		t.collector.Errorf(format, args...)
-		return
-	}
 	assert.SkipInternalFrames(t.t)
 	t.t.Errorf(format, args...)
 }
 
 func (t *T) FailNow() {
-	if t.collector != nil {
-		t.collector.FailNow()
-		return
-	}
 	t.t.FailNow()
 }
 

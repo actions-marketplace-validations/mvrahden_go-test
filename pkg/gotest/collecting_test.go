@@ -5,47 +5,47 @@ import (
 	"time"
 )
 
-func TestRunCollectingPoll_Pass(t *testing.T) {
-	failed, msg := runCollectingPoll(func(poll *T) {
+func TestRecord_Pass(t *testing.T) {
+	rec := Record(func(r *R) {
 		// no assertions fail
 	})
-	if failed {
-		t.Errorf("expected pass, got failed with message: %s", msg)
+	if rec.Failed() {
+		t.Errorf("expected pass, got failed with message: %s", rec.Message())
 	}
 }
 
-func TestRunCollectingPoll_Errorf(t *testing.T) {
-	failed, msg := runCollectingPoll(func(poll *T) {
-		poll.Errorf("expected %d, got %d", 1, 2)
+func TestRecord_Errorf(t *testing.T) {
+	rec := Record(func(r *R) {
+		r.Errorf("expected %d, got %d", 1, 2)
 	})
-	if !failed {
+	if !rec.Failed() {
 		t.Error("expected failure")
 	}
-	if msg != "expected 1, got 2" {
-		t.Errorf("message = %q, want %q", msg, "expected 1, got 2")
+	if rec.Message() != "expected 1, got 2" {
+		t.Errorf("message = %q, want %q", rec.Message(), "expected 1, got 2")
 	}
 }
 
-func TestRunCollectingPoll_FailNow(t *testing.T) {
-	failed, _ := runCollectingPoll(func(poll *T) {
-		poll.FailNow()
+func TestRecord_FailNow(t *testing.T) {
+	rec := Record(func(r *R) {
+		r.FailNow()
 		t.Error("should not reach here after FailNow")
 	})
-	if !failed {
+	if !rec.Failed() {
 		t.Error("expected failure from FailNow")
 	}
 }
 
-func TestRunCollectingPoll_ErrorfThenFailNow(t *testing.T) {
-	failed, msg := runCollectingPoll(func(poll *T) {
-		poll.Errorf("first error")
-		poll.FailNow()
+func TestRecord_ErrorfThenFailNow(t *testing.T) {
+	rec := Record(func(r *R) {
+		r.Errorf("first error")
+		r.FailNow()
 	})
-	if !failed {
+	if !rec.Failed() {
 		t.Error("expected failure")
 	}
-	if msg != "first error" {
-		t.Errorf("message = %q, want %q", msg, "first error")
+	if rec.Message() != "first error" {
+		t.Errorf("message = %q, want %q", rec.Message(), "first error")
 	}
 }
 

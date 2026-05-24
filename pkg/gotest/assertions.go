@@ -9,7 +9,6 @@ import (
 	"math"
 	"reflect"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
@@ -39,34 +38,6 @@ func failf(t testingT, format string, args ...any) {
 }
 
 // --- private helpers ---
-
-// collectingT captures assertion failures without propagating them.
-type collectingT struct {
-	failed  bool
-	message string
-}
-
-func (c *collectingT) Errorf(format string, args ...any) {
-	c.failed = true
-	c.message = fmt.Sprintf(format, args...)
-}
-
-func (c *collectingT) FailNow() {
-	c.failed = true
-	runtime.Goexit()
-}
-
-func runCollectingPoll(fn func(poll *T)) (failed bool, message string) {
-	c := &collectingT{}
-	poll := &T{collector: c}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		fn(poll)
-	}()
-	<-done
-	return c.failed, c.message
-}
 
 func didPanic(f func()) (recovered any, panicked bool) {
 	defer func() {
@@ -171,7 +142,7 @@ type regexpPattern interface {
 // --- public assertions (alphabetical) ---
 
 // Consistently polls fn for the entire waitFor duration, failing on the first assertion failure.
-func Consistently(t testingT, waitFor, tick time.Duration, fn func(poll *T)) {
+func Consistently(t testingT, waitFor, tick time.Duration, fn func(poll *R)) {
 	timer := time.NewTimer(waitFor)
 	defer timer.Stop()
 	ticker := time.NewTicker(tick)
@@ -184,9 +155,9 @@ func Consistently(t testingT, waitFor, tick time.Duration, fn func(poll *T)) {
 			return
 		case <-ticker.C:
 			polls++
-			failed, msg := runCollectingPoll(fn)
-			if failed {
-				failf(t, "Consistently failed on poll %d:\n    %s", polls, msg)
+			rec := Record(fn)
+			if rec.Failed() {
+				failf(t, "Consistently failed on poll %d:\n    %s", polls, rec.Message())
 				return
 			}
 		}
@@ -268,7 +239,7 @@ func ErrorIs(t testingT, err, target error, msgAndArgs ...any) {
 }
 
 // Eventually polls fn until it passes without assertion failures, or fails after waitFor.
-func Eventually(t testingT, waitFor, tick time.Duration, fn func(poll *T)) {
+func Eventually(t testingT, waitFor, tick time.Duration, fn func(poll *R)) {
 	timer := time.NewTimer(waitFor)
 	defer timer.Stop()
 	ticker := time.NewTicker(tick)
@@ -287,11 +258,11 @@ func Eventually(t testingT, waitFor, tick time.Duration, fn func(poll *T)) {
 			return
 		case <-ticker.C:
 			polls++
-			failed, msg := runCollectingPoll(fn)
-			if !failed {
+			rec := Record(fn)
+			if !rec.Failed() {
 				return
 			}
-			lastMsg = msg
+			lastMsg = rec.Message()
 		}
 	}
 }
