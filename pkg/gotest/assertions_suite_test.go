@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sync/atomic"
 	"time"
 
 	"github.com/mvrahden/go-test/pkg/gotest"
@@ -24,15 +25,19 @@ type point struct{ X, Y int }
 type AssertionsTestSuite struct{}
 
 func (s *AssertionsTestSuite) TestFail(t *gotest.T) {
-	t.It("always fails", func(it *gotest.T) {
-		m := gotest.Record(func(r *gotest.R) { gotest.Fail(r) })
-		gotest.True(it, m.Failed())
+	t.When("called without message", func(w *gotest.T) {
+		w.It("fails", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.Fail(r) })
+			gotest.True(it, m.Failed())
+		})
 	})
 
-	t.It("includes custom message", func(it *gotest.T) {
-		m := gotest.Record(func(r *gotest.R) { gotest.Fail(r, "something went wrong: %d", 42) })
-		gotest.True(it, m.Failed())
-		gotest.Contains(it, m.Message(), "something went wrong: 42")
+	t.When("called with message", func(w *gotest.T) {
+		w.It("includes the formatted message", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.Fail(r, "something went wrong: %d", 42) })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "something went wrong: 42")
+		})
 	})
 }
 
@@ -222,6 +227,14 @@ func (s *AssertionsTestSuite) TestNotZero(t *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.NotZero(r, point{1, 2}) })
 			gotest.False(it, m.Failed())
 		})
+		w.It("passes for float64", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.NotZero(r, 3.14) })
+			gotest.False(it, m.Failed())
+		})
+		w.It("passes for non-nil channel", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.NotZero(r, make(chan int)) })
+			gotest.False(it, m.Failed())
+		})
 	})
 
 	t.When("value is zero", func(w *gotest.T) {
@@ -243,6 +256,14 @@ func (s *AssertionsTestSuite) TestNotZero(t *gotest.T) {
 		})
 		w.It("fails for struct", func(it *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.NotZero(r, point{}) })
+			gotest.True(it, m.Failed())
+		})
+		w.It("fails for float64", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.NotZero(r, 0.0) })
+			gotest.True(it, m.Failed())
+		})
+		w.It("fails for nil channel", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.NotZero[chan int](r, nil) })
 			gotest.True(it, m.Failed())
 		})
 	})
@@ -520,6 +541,7 @@ func (s *AssertionsTestSuite) TestNoError(t *gotest.T) {
 		w.It("fails", func(it *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.NoError(r, errors.New("some error")) })
 			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "some error")
 		})
 	})
 }
@@ -536,6 +558,7 @@ func (s *AssertionsTestSuite) TestError(t *gotest.T) {
 		w.It("fails", func(it *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.Error(r, nil) })
 			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "expected an error")
 		})
 	})
 }
@@ -813,6 +836,10 @@ func (s *AssertionsTestSuite) TestLen(t *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.Len(r, map[string]int{"a": 1}, 5) })
 			gotest.True(it, m.Failed())
 		})
+		w.It("fails for negative expected length", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.Len(r, []int{1, 2}, -1) })
+			gotest.True(it, m.Failed())
+		})
 	})
 
 	t.When("object has no length", func(w *gotest.T) {
@@ -986,6 +1013,10 @@ func (s *AssertionsTestSuite) TestRegexp(t *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.Regexp(r, re, "say hello world") })
 			gotest.False(it, m.Failed())
 		})
+		w.It("passes for empty pattern (matches everything)", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.Regexp(r, ``, "anything") })
+			gotest.False(it, m.Failed())
+		})
 	})
 
 	t.When("string does not match pattern", func(w *gotest.T) {
@@ -1038,6 +1069,20 @@ func (s *AssertionsTestSuite) TestInDelta(t *gotest.T) {
 			gotest.True(it, m.Failed())
 		})
 	})
+
+	t.When("delta is negative", func(w *gotest.T) {
+		w.It("always fails even for equal values", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, 5, 5, -1.0) })
+			gotest.True(it, m.Failed())
+		})
+	})
+
+	t.When("delta is zero", func(w *gotest.T) {
+		w.It("fails for unequal values", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, 5, 6, 0.0) })
+			gotest.True(it, m.Failed())
+		})
+	})
 }
 
 func (s *AssertionsTestSuite) TestJSONEq(t *gotest.T) {
@@ -1067,6 +1112,16 @@ func (s *AssertionsTestSuite) TestJSONEq(t *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.JSONEq(r, json.RawMessage(`{"x":10}`), `{"x":10}`) })
 			gotest.False(it, m.Failed())
 		})
+		w.It("passes for nested objects with different key order", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) {
+				gotest.JSONEq(r, `{"a":{"x":1,"y":2},"b":3}`, `{"b":3,"a":{"y":2,"x":1}}`)
+			})
+			gotest.False(it, m.Failed())
+		})
+		w.It("passes for equal arrays", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.JSONEq(r, `[1,2,3]`, `[1,2,3]`) })
+			gotest.False(it, m.Failed())
+		})
 	})
 
 	t.When("JSON structures differ", func(w *gotest.T) {
@@ -1076,6 +1131,14 @@ func (s *AssertionsTestSuite) TestJSONEq(t *gotest.T) {
 		})
 		w.It("fails for different keys", func(it *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.JSONEq(r, `{"a":1}`, `{"b":1}`) })
+			gotest.True(it, m.Failed())
+		})
+		w.It("fails for null vs empty object", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.JSONEq(r, `null`, `{}`) })
+			gotest.True(it, m.Failed())
+		})
+		w.It("fails for arrays with different order", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.JSONEq(r, `[1,2,3]`, `[3,2,1]`) })
 			gotest.True(it, m.Failed())
 		})
 	})
@@ -1126,6 +1189,26 @@ func (s *AssertionsTestSuite) TestTimeWithin(t *gotest.T) {
 			gotest.True(it, m.Failed())
 		})
 	})
+
+	t.When("tolerance is negative", func(w *gotest.T) {
+		w.It("always fails even for identical times", func(it *gotest.T) {
+			base := time.Now()
+			m := gotest.Record(func(r *gotest.R) {
+				gotest.TimeWithin(r, base, base, -1*time.Second)
+			})
+			gotest.True(it, m.Failed())
+		})
+	})
+
+	t.When("times are identical", func(w *gotest.T) {
+		w.It("passes with any positive tolerance", func(it *gotest.T) {
+			base := time.Now()
+			m := gotest.Record(func(r *gotest.R) {
+				gotest.TimeWithin(r, base, base, 1*time.Nanosecond)
+			})
+			gotest.False(it, m.Failed())
+		})
+	})
 }
 
 func (s *AssertionsTestSuite) TestTimeIsNow(t *gotest.T) {
@@ -1162,6 +1245,20 @@ func (s *AssertionsTestSuite) TestPanics(t *gotest.T) {
 			gotest.False(it, m.Failed())
 			gotest.Equal(it, 42, v)
 		})
+		w.It("passes for nil panic", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) {
+				gotest.Panics(r, func() { panic(nil) })
+			})
+			gotest.False(it, m.Failed())
+		})
+		w.It("passes for error panic", func(it *gotest.T) {
+			var v any
+			m := gotest.Record(func(r *gotest.R) {
+				v = gotest.Panics(r, func() { panic(fmt.Errorf("boom")) })
+			})
+			gotest.False(it, m.Failed())
+			gotest.Contains(it, fmt.Sprint(v), "boom")
+		})
 	})
 
 	t.When("function does not panic", func(w *gotest.T) {
@@ -1188,6 +1285,19 @@ func (s *AssertionsTestSuite) TestEventually(t *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) {
 				gotest.Eventually(r, 50*time.Millisecond, 10*time.Millisecond, func(poll *gotest.R) {
 					gotest.True(poll, true)
+				})
+			})
+			gotest.False(it, m.Failed())
+		})
+		w.It("passes for async goroutine condition", func(it *gotest.T) {
+			var counter atomic.Int32
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				counter.Store(42)
+			}()
+			m := gotest.Record(func(r *gotest.R) {
+				gotest.Eventually(r, 1*time.Second, 10*time.Millisecond, func(poll *gotest.R) {
+					gotest.Equal(poll, int32(42), counter.Load())
 				})
 			})
 			gotest.False(it, m.Failed())
