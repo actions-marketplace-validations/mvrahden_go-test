@@ -301,9 +301,16 @@ binaries. State is transferred via JSON serialization.
 ```
 
 **Transfer vs Local fields:**
-- Transfer fields: exported, JSON-serializable, sent across processes
+- Transfer fields: exported, JSON-serializable, sent across processes.
+  These should be stable connection parameters (host, port, credentials),
+  not ephemeral handles or runtime state.
 - Local fields: assigned inside `Hydrate()`, reconstructed in each test
   process (e.g., `*sql.DB` handles that can't serialize)
+
+**Design intent:** the state file is a connection-parameter snapshot, not a
+general data bus. `Hydrate()` turns those parameters into live connections;
+`Dehydrate()` releases them. This keeps fixture state deterministic across
+the N test processes that read the same snapshot.
 
 The `ClassifyLocalFieldsRaw()` function performs AST analysis on the Hydrate
 method body to determine which exported fields are assigned (and therefore
