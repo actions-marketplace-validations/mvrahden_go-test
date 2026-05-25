@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/mvrahden/go-test/about"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
 	"golang.org/x/tools/go/ast/inspector"
@@ -256,7 +257,7 @@ func checkLifecyclePairs(pass *analysis.Pass, suites map[string]*suiteInfo) {
 func checkOrphanedFiles(pass *analysis.Pass) {
 	for _, file := range pass.Files {
 		name := filepath.Base(pass.Fset.File(file.Pos()).Name())
-		if strings.HasPrefix(name, "ƒƒ_") && strings.HasSuffix(name, "_test.go") {
+		if about.PSuiteRegex.MatchString(name) {
 			report(pass, GeneratedFile, file.Pos(), "generated file %s should not be checked into version control", name)
 		}
 	}
@@ -314,7 +315,7 @@ func checkTestifyImports(pass *analysis.Pass) {
 }
 
 func isGeneratedFile(pass *analysis.Pass, pos token.Pos) bool {
-	return strings.HasPrefix(filepath.Base(pass.Fset.Position(pos).Filename), "ƒƒ_")
+	return about.PSuiteRegex.MatchString(filepath.Base(pass.Fset.Position(pos).Filename))
 }
 
 func isTestingT(expr ast.Expr) bool {

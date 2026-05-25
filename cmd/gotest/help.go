@@ -362,7 +362,7 @@ func printCleanHelp() {
 Usage:
   gotest clean [packages...]
 
-Removes generated overlay files (ƒƒ_*_test.go) that are no longer
+Removes generated overlay files (gotest_*_test.go) that are no longer
 needed. These files are normally ephemeral but may be left behind
 by --debug runs or interrupted processes.
 
