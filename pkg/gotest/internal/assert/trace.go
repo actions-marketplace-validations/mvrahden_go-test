@@ -88,5 +88,6 @@ func IsGotestSource(file string) bool {
 }
 
 func IsGeneratedBridge(file string) bool {
-	return strings.HasPrefix(filepath.Base(file), "ƒƒ_")
+	name := filepath.Base(file)
+	return name == "gotest_psuite_test.go" || name == "gotest_pxsuite_test.go"
 }

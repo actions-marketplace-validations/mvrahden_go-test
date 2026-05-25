@@ -55,7 +55,7 @@ func (s *E2ETestSuite) TestT(t *gotest.T) {
 		"pkg/gotest/snapshot_internal_test.go",
 		"pkg/gotest/snapshot_suite_test.go",
 		"pkg/gotest/t_suite_test.go",
-		"pkg/gotest/ƒƒ_",
+		"pkg/gotest/gotest_",
 	)
 	testutils.CopyModuleUnderTestToTmp(t.T(), tmp, "../..", excludedPaths...)
 	placeFixture(t.T(), tmp, "t_test.go", "pkg/gotest/t_test.go")

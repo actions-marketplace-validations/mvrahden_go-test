@@ -11,10 +11,10 @@ type GitTestSuite struct{}
 func (s *GitTestSuite) TestPSuiteRegex(t *gotest.T) {
 	t.When("generated suite filenames", func(w *gotest.T) {
 		for sub, tc := range gotest.Each(w, []struct{ Name string }{
-			{"ƒƒ_psuite_test.go"},
-			{"ƒƒ_pxsuite_test.go"},
-			{"gosuite/ƒƒ_psuite_test.go"},
-			{"gosuite/ƒƒ_pxsuite_test.go"},
+			{"gotest_psuite_test.go"},
+			{"gotest_pxsuite_test.go"},
+			{"gosuite/gotest_psuite_test.go"},
+			{"gosuite/gotest_pxsuite_test.go"},
 		}) {
 			gotest.True(sub, about.PSuiteRegex.Match([]byte(tc.Name)))
 		}

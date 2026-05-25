@@ -3,11 +3,11 @@ package about
 import "regexp"
 
 const (
-	PSuite  = "ƒƒ_psuite_test.go"
-	PXSuite = "ƒƒ_pxsuite_test.go"
+	PSuite  = "gotest_psuite_test.go"
+	PXSuite = "gotest_pxsuite_test.go"
 )
 
-var PSuiteRegex = regexp.MustCompile(`ƒƒ_p(x)?suite_test\.go$`)
+var PSuiteRegex = regexp.MustCompile(`gotest_p(x)?suite_test\.go$`)
 
 const (
 	Application = "gotest"
