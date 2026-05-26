@@ -243,8 +243,10 @@ func executeTests(ctx context.Context, cfg ExecConfig, overlay *overlayResult) (
 	if cfg.JSON {
 		mode = gotestrunner.RunStreamJSON
 	}
-	_, code := gotestrunner.RunSuites(ctx, targets, extraEnv, 0, mode, pf.verbose)
-	return code, nil
+	collector := gotestrunner.NewOutputCollector(mode, pf.verbose)
+	gotestrunner.RunSuites(ctx, targets, extraEnv, 0, collector)
+	collector.Finalize(overlay.noSuitePackages)
+	return collector.WorstExitCode(), nil
 }
 
 func executeTestsStreaming(ctx context.Context, cfg ExecConfig, overlay *overlayResult) (int, error) {
@@ -279,9 +281,7 @@ func executeTestsStreaming(ctx context.Context, cfg ExecConfig, overlay *overlay
 
 	maxParallel := 2 * runtime.GOMAXPROCS(0)
 	sem := make(chan struct{}, maxParallel)
-	var mu sync.Mutex
 	var wg sync.WaitGroup
-	worstCode := 0
 	anyTargets := false
 	var allTargets []gotestrunner.SuiteTarget
 
@@ -312,18 +312,12 @@ func executeTestsStreaming(ctx context.Context, cfg ExecConfig, overlay *overlay
 		return fixtureEnv, fixtureEnvErr
 	}
 
-	var batcher *gotestrunner.PackageBatcher
-	if !cfg.JSON {
-		batcher = gotestrunner.NewPackageBatcher(pf.verbose)
+	mode := gotestrunner.RunBatchText
+	if cfg.JSON {
+		mode = gotestrunner.RunStreamJSON
 	}
-
-	type jsonPkgState struct {
-		expected  int
-		completed int
-		failed    bool
-		duration  time.Duration
-	}
-	jsonPkgs := map[string]*jsonPkgState{}
+	collector := gotestrunner.NewOutputCollector(mode, pf.verbose)
+	collector.SetFlushOrder(overlay.suitePackages)
 
 loop:
 	for {
@@ -359,16 +353,7 @@ loop:
 			allTargets = append(allTargets, targets...)
 		}
 
-		if batcher != nil {
-			mu.Lock()
-			batcher.Register(cr.Package, len(targets))
-			mu.Unlock()
-		}
-		if cfg.JSON {
-			mu.Lock()
-			jsonPkgs[cr.Package] = &jsonPkgState{expected: len(targets)}
-			mu.Unlock()
-		}
+		collector.Register(cr.Package, len(targets))
 
 		for i, target := range targets {
 			wg.Add(1)
@@ -394,30 +379,8 @@ loop:
 				}
 				defer func() { <-sem }()
 
-				r := gotestrunner.RunSingleSuite(streamCtx, t, env, cfg.JSON)
-				mu.Lock()
-				if r.ExitCode > worstCode {
-					worstCode = r.ExitCode
-				}
-				if cfg.JSON {
-					os.Stdout.Write(r.Stdout)
-					if len(r.Stderr) > 0 {
-						os.Stderr.Write(r.Stderr)
-					}
-					s := jsonPkgs[t.Package]
-					s.completed++
-					s.duration += r.Duration
-					if r.ExitCode != 0 {
-						s.failed = true
-					}
-					if s.completed == s.expected {
-						gotestrunner.WriteJSONPackageSummary(t.Package, s.failed, s.duration)
-					}
-				} else {
-					batcher.Record(t.Package, idx, r)
-					batcher.FlushReady()
-				}
-				mu.Unlock()
+				r := gotestrunner.RunSingleSuite(streamCtx, t, env, collector.UsesTest2JSON())
+				collector.RecordResult(t.Package, idx, r)
 			}(target, i)
 		}
 	}
@@ -439,17 +402,9 @@ loop:
 		return 0, nil
 	}
 
-	if !cfg.JSON {
-		for _, pkg := range overlay.noSuitePackages {
-			gotestrunner.WriteNoTestFiles(pkg)
-		}
-	}
+	collector.Finalize(overlay.noSuitePackages)
 
-	if worstCode != 0 && !cfg.JSON {
-		gotestrunner.WriteTrailingFail()
-	}
-
-	return worstCode, nil
+	return collector.WorstExitCode(), nil
 }
 
 func executeTestsCaptured(ctx context.Context, cfg ExecConfig, overlay *overlayResult) ([]byte, int, error) {
@@ -488,8 +443,9 @@ func executeTestsCaptured(ctx context.Context, cfg ExecConfig, overlay *overlayR
 		defer mergeCoverProfiles(targets, pf.userCoverProfile)
 	}
 
-	data, code := gotestrunner.RunSuites(ctx, targets, extraEnv, 0, gotestrunner.RunCaptureJSON, false)
-	return data, code, nil
+	collector := gotestrunner.NewOutputCollector(gotestrunner.RunCaptureJSON, false)
+	gotestrunner.RunSuites(ctx, targets, extraEnv, 0, collector)
+	return collector.CapturedJSON(), collector.WorstExitCode(), nil
 }
 
 func Run(cfg ExecConfig) int {

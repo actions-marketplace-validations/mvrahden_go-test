@@ -631,177 +631,311 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 	})
 }
 
-// --- PackageBatcher tests ---
+// --- OutputCollector tests ---
 
-func (s *GotestrunnerTestSuite) TestPackageBatcher(t *gotest.T) {
-	t.When("recording results", func(w *gotest.T) {
-		w.It("returns true only when all suites are recorded", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(false)
-			b.Register("pkg/a", 3)
-			b.Register("pkg/b", 1)
+func (s *GotestrunnerTestSuite) TestOutputCollector(t *gotest.T) {
+	pass := func(d time.Duration) gotestrunner.SuiteResult {
+		return gotestrunner.SuiteResult{Stdout: []byte("PASS\n"), ExitCode: 0, Duration: d}
+	}
 
-			r := gotestrunner.SuiteResult{ExitCode: 0}
-
-			gotest.False(it, b.Record("pkg/a", 0, r))
-			gotest.False(it, b.Record("pkg/a", 2, r))
-			gotest.True(it, b.Record("pkg/a", 1, r))
-			gotest.True(it, b.Record("pkg/b", 0, r))
-		})
-	})
-
-	t.When("flushing in verbose mode", func(w *gotest.T) {
+	t.When("text mode verbose", func(w *gotest.T) {
 		w.It("writes verbose output and PASS summary for passing packages", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(true)
-			b.Register("example.com/ok", 1)
-			b.Record("example.com/ok", 0, gotestrunner.SuiteResult{
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, true, gotestrunner.WithWriters(&stdout, &stderr))
+			c.Register("example.com/ok", 1)
+			c.RecordResult("example.com/ok", 0, gotestrunner.SuiteResult{
 				Stdout:   []byte("=== RUN   TestOK\n--- PASS: TestOK (0.00s)\nPASS\n"),
 				ExitCode: 0,
 				Duration: 50 * time.Millisecond,
 			})
 
-			out, _ := captureFlush(it, b, "example.com/ok")
-
 			wantOut := "=== RUN   TestOK\n--- PASS: TestOK (0.00s)\n" +
 				"PASS\nok  \texample.com/ok\t0.050s\n"
-			gotest.Equal(it, wantOut, out)
+			gotest.Equal(it, wantOut, stdout.String())
 		})
 
 		w.It("writes verbose output and FAIL summary for mixed results", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(true)
-			b.Register("example.com/pkg", 2)
-			b.Record("example.com/pkg", 0, gotestrunner.SuiteResult{
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, true, gotestrunner.WithWriters(&stdout, &stderr))
+			c.Register("example.com/pkg", 2)
+			c.RecordResult("example.com/pkg", 0, gotestrunner.SuiteResult{
 				Stdout:   []byte("=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\n"),
 				ExitCode: 0,
 				Duration: 100 * time.Millisecond,
 			})
-			b.Record("example.com/pkg", 1, gotestrunner.SuiteResult{
+			c.RecordResult("example.com/pkg", 1, gotestrunner.SuiteResult{
 				Stdout:   []byte("=== RUN   TestB\n--- FAIL: TestB (0.00s)\nFAIL\n"),
 				Stderr:   []byte("some error\n"),
 				ExitCode: 1,
 				Duration: 200 * time.Millisecond,
 			})
 
-			out, serr := captureFlush(it, b, "example.com/pkg")
-
 			wantOut := "=== RUN   TestA\n--- PASS: TestA (0.00s)\n" +
 				"=== RUN   TestB\n--- FAIL: TestB (0.00s)\n" +
 				"FAIL\nFAIL\texample.com/pkg\t0.300s\n"
-			gotest.Equal(it, wantOut, out)
-			gotest.Equal(it, "some error\n", serr)
+			gotest.Equal(it, wantOut, stdout.String())
+			gotest.Equal(it, "some error\n", stderr.String())
 		})
 	})
 
-	t.When("flushing in non-verbose mode", func(w *gotest.T) {
+	t.When("text mode non-verbose", func(w *gotest.T) {
 		w.It("suppresses binary output for passing packages", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(false)
-			b.Register("example.com/ok", 1)
-			b.Record("example.com/ok", 0, gotestrunner.SuiteResult{
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/ok", 1)
+			c.RecordResult("example.com/ok", 0, gotestrunner.SuiteResult{
 				Stdout:   []byte("PASS\n"),
 				ExitCode: 0,
 				Duration: 50 * time.Millisecond,
 			})
 
-			out, _ := captureFlush(it, b, "example.com/ok")
-
-			gotest.Equal(it, "ok  \texample.com/ok\t0.050s\n", out)
+			gotest.Equal(it, "ok  \texample.com/ok\t0.050s\n", stdout.String())
 		})
 
 		w.It("shows binary output for failing packages", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(false)
-			b.Register("example.com/fail", 1)
-			b.Record("example.com/fail", 0, gotestrunner.SuiteResult{
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &stderr))
+			c.Register("example.com/fail", 1)
+			c.RecordResult("example.com/fail", 0, gotestrunner.SuiteResult{
 				Stdout:   []byte("--- FAIL: TestBad (0.00s)\n    bad_test.go:5: assertion failed\nFAIL\n"),
 				Stderr:   []byte("error output\n"),
 				ExitCode: 1,
 				Duration: 100 * time.Millisecond,
 			})
 
-			out, serr := captureFlush(it, b, "example.com/fail")
-
 			wantOut := "--- FAIL: TestBad (0.00s)\n    bad_test.go:5: assertion failed\n" +
 				"FAIL\nFAIL\texample.com/fail\t0.100s\n"
-			gotest.Equal(it, wantOut, out)
-			gotest.Equal(it, "error output\n", serr)
+			gotest.Equal(it, wantOut, stdout.String())
+			gotest.Equal(it, "error output\n", stderr.String())
 		})
 
 		w.It("omits PASS prefix from summary line", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(false)
-			b.Register("example.com/clean", 1)
-			b.Record("example.com/clean", 0, gotestrunner.SuiteResult{
-				Stdout:   []byte("PASS\n"),
-				ExitCode: 0,
-				Duration: 1234 * time.Millisecond,
-			})
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/clean", 1)
+			c.RecordResult("example.com/clean", 0, pass(1234*time.Millisecond))
 
-			out, _ := captureFlush(it, b, "example.com/clean")
-
-			gotest.False(it, strings.Contains(out, "PASS"),
-				"non-verbose passing output should not contain PASS, got: %q", out)
-			gotest.True(it, strings.HasPrefix(out, "ok  \t"),
-				"should start with ok summary, got: %q", out)
+			gotest.False(it, strings.Contains(stdout.String(), "PASS"),
+				"non-verbose passing output should not contain PASS, got: %q", stdout.String())
+			gotest.True(it, strings.HasPrefix(stdout.String(), "ok  \t"),
+				"should start with ok summary, got: %q", stdout.String())
 		})
 	})
 
 	t.When("flushing in registration order", func(w *gotest.T) {
 		w.It("buffers later packages until earlier ones complete", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(false)
-			b.Register("example.com/a", 1)
-			b.Register("example.com/b", 1)
-			b.Register("example.com/c", 1)
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/a", 1)
+			c.Register("example.com/b", 1)
+			c.Register("example.com/c", 1)
 
-			pass := func(d time.Duration) gotestrunner.SuiteResult {
-				return gotestrunner.SuiteResult{Stdout: []byte("PASS\n"), ExitCode: 0, Duration: d}
-			}
+			c.RecordResult("example.com/c", 0, pass(30*time.Millisecond))
+			gotest.Equal(it, "", stdout.String(), "c should be buffered because a and b are not done")
 
-			b.Record("example.com/c", 0, pass(30*time.Millisecond))
-			out := captureFlushReady(it, b)
-			gotest.Equal(it, "", out, "c should be buffered because a and b are not done")
+			c.RecordResult("example.com/a", 0, pass(10*time.Millisecond))
+			gotest.Equal(it, "ok  \texample.com/a\t0.010s\n", stdout.String(), "a should flush as the head")
 
-			b.Record("example.com/a", 0, pass(10*time.Millisecond))
-			out = captureFlushReady(it, b)
-			gotest.Equal(it, "ok  \texample.com/a\t0.010s\n", out, "a should flush as the head")
-
-			b.Record("example.com/b", 0, pass(20*time.Millisecond))
-			out = captureFlushReady(it, b)
+			stdout.Reset()
+			c.RecordResult("example.com/b", 0, pass(20*time.Millisecond))
 			want := "ok  \texample.com/b\t0.020s\n" +
 				"ok  \texample.com/c\t0.030s\n"
-			gotest.Equal(it, want, out, "b and c should flush together")
+			gotest.Equal(it, want, stdout.String(), "b and c should flush together")
 		})
 
 		w.It("flushes immediately when packages complete in order", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(false)
-			b.Register("example.com/x", 1)
-			b.Register("example.com/y", 1)
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/x", 1)
+			c.Register("example.com/y", 1)
 
-			pass := func(d time.Duration) gotestrunner.SuiteResult {
-				return gotestrunner.SuiteResult{Stdout: []byte("PASS\n"), ExitCode: 0, Duration: d}
-			}
+			c.RecordResult("example.com/x", 0, pass(10*time.Millisecond))
+			gotest.Equal(it, "ok  \texample.com/x\t0.010s\n", stdout.String())
 
-			b.Record("example.com/x", 0, pass(10*time.Millisecond))
-			out := captureFlushReady(it, b)
-			gotest.Equal(it, "ok  \texample.com/x\t0.010s\n", out)
-
-			b.Record("example.com/y", 0, pass(20*time.Millisecond))
-			out = captureFlushReady(it, b)
-			gotest.Equal(it, "ok  \texample.com/y\t0.020s\n", out)
+			stdout.Reset()
+			c.RecordResult("example.com/y", 0, pass(20*time.Millisecond))
+			gotest.Equal(it, "ok  \texample.com/y\t0.020s\n", stdout.String())
 		})
 	})
 
 	t.When("tracking failures", func(w *gotest.T) {
 		w.It("reports no failure when all pass", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(false)
-			b.Register("example.com/ok", 1)
-			b.Record("example.com/ok", 0, gotestrunner.SuiteResult{ExitCode: 0})
-			gotest.False(it, b.AnyFailed())
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&bytes.Buffer{}, &bytes.Buffer{}))
+			c.Register("example.com/ok", 1)
+			c.RecordResult("example.com/ok", 0, gotestrunner.SuiteResult{ExitCode: 0})
+			gotest.False(it, c.AnyFailed())
 		})
 
 		w.It("reports failure when any suite fails", func(it *gotest.T) {
-			b := gotestrunner.NewPackageBatcher(false)
-			b.Register("example.com/a", 1)
-			b.Register("example.com/b", 1)
-			b.Record("example.com/a", 0, gotestrunner.SuiteResult{ExitCode: 0})
-			b.Record("example.com/b", 0, gotestrunner.SuiteResult{ExitCode: 1})
-			gotest.True(it, b.AnyFailed())
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&bytes.Buffer{}, &bytes.Buffer{}))
+			c.Register("example.com/a", 1)
+			c.Register("example.com/b", 1)
+			c.RecordResult("example.com/a", 0, gotestrunner.SuiteResult{ExitCode: 0})
+			c.RecordResult("example.com/b", 0, gotestrunner.SuiteResult{ExitCode: 1})
+			gotest.True(it, c.AnyFailed())
+		})
+
+		w.It("tracks worst exit code", func(it *gotest.T) {
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&bytes.Buffer{}, &bytes.Buffer{}))
+			c.Register("example.com/a", 1)
+			c.Register("example.com/b", 1)
+			c.RecordResult("example.com/a", 0, gotestrunner.SuiteResult{ExitCode: 1})
+			c.RecordResult("example.com/b", 0, gotestrunner.SuiteResult{ExitCode: 2})
+			gotest.Equal(it, 2, c.WorstExitCode())
+		})
+	})
+
+	t.When("finalize", func(w *gotest.T) {
+		w.It("emits trailing FAIL when any package failed", func(it *gotest.T) {
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/a", 1)
+			c.RecordResult("example.com/a", 0, gotestrunner.SuiteResult{Stdout: []byte("FAIL\n"), ExitCode: 1, Duration: time.Millisecond})
+			stdout.Reset()
+			c.Finalize(nil)
+			gotest.Equal(it, "FAIL\n", stdout.String())
+		})
+
+		w.It("emits no-test-files annotation", func(it *gotest.T) {
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Finalize([]string{"example.com/empty"})
+			gotest.Equal(it, "?   \texample.com/empty\t[no test files]\n", stdout.String())
+		})
+
+		w.It("emits no-test-files then trailing FAIL together", func(it *gotest.T) {
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/a", 1)
+			c.RecordResult("example.com/a", 0, gotestrunner.SuiteResult{Stdout: []byte("FAIL\n"), ExitCode: 1, Duration: time.Millisecond})
+			stdout.Reset()
+			c.Finalize([]string{"example.com/empty"})
+			want := "?   \texample.com/empty\t[no test files]\n" +
+				"FAIL\n"
+			gotest.Equal(it, want, stdout.String())
+		})
+
+		w.It("is a no-op for captured JSON mode", func(it *gotest.T) {
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunCaptureJSON, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/a", 1)
+			c.RecordResult("example.com/a", 0, gotestrunner.SuiteResult{ExitCode: 1})
+			stdout.Reset()
+			c.Finalize([]string{"example.com/empty"})
+			gotest.Equal(it, "", stdout.String())
+		})
+	})
+
+	t.When("JSON streaming mode", func(w *gotest.T) {
+		w.It("filters package-level events and emits synthetic summary", func(it *gotest.T) {
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunStreamJSON, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/pkg", 1)
+
+			suiteJSON := strings.Join([]string{
+				`{"Time":"2024-01-01T00:00:00Z","Action":"start","Package":"example.com/pkg"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/pkg","Test":"TestFoo"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/pkg","Test":"TestFoo","Output":"=== RUN   TestFoo\n"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/pkg","Test":"TestFoo","Elapsed":0.01}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/pkg","Output":"PASS\n"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/pkg","Elapsed":0.01}`,
+			}, "\n") + "\n"
+
+			c.RecordResult("example.com/pkg", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte(suiteJSON),
+				ExitCode: 0,
+				Duration: 10 * time.Millisecond,
+			})
+
+			lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+
+			// Should have: run, output, pass (test-level) + output (synthetic summary) + pass (synthetic)
+			gotest.Equal(it, 5, len(lines), "got: %s", stdout.String())
+
+			var first map[string]any
+			gotest.NoError(it, json.Unmarshal([]byte(lines[0]), &first))
+			gotest.Equal(it, "run", first["Action"])
+			gotest.Equal(it, "TestFoo", first["Test"])
+
+			var summary map[string]any
+			gotest.NoError(it, json.Unmarshal([]byte(lines[3]), &summary))
+			gotest.Equal(it, "output", summary["Action"])
+			gotest.Contains(it, summary["Output"].(string), "ok  \texample.com/pkg")
+
+			var verdict map[string]any
+			gotest.NoError(it, json.Unmarshal([]byte(lines[4]), &verdict))
+			gotest.Equal(it, "pass", verdict["Action"])
+			gotest.Equal(it, "example.com/pkg", verdict["Package"])
+		})
+
+		w.It("emits fail verdict when any suite fails", func(it *gotest.T) {
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunStreamJSON, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/pkg", 2)
+
+			passSuiteJSON := `{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":0.01}` + "\n" +
+				`{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/pkg","Elapsed":0.01}` + "\n"
+			failSuiteJSON := `{"Time":"2024-01-01T00:00:00Z","Action":"fail","Package":"example.com/pkg","Test":"TestB","Elapsed":0.02}` + "\n" +
+				`{"Time":"2024-01-01T00:00:00Z","Action":"fail","Package":"example.com/pkg","Elapsed":0.02}` + "\n"
+
+			c.RecordResult("example.com/pkg", 0, gotestrunner.SuiteResult{
+				Stdout: []byte(passSuiteJSON), ExitCode: 0, Duration: 10 * time.Millisecond,
+			})
+			c.RecordResult("example.com/pkg", 1, gotestrunner.SuiteResult{
+				Stdout: []byte(failSuiteJSON), ExitCode: 1, Duration: 20 * time.Millisecond,
+			})
+
+			lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+			lastLine := lines[len(lines)-1]
+			var verdict map[string]any
+			gotest.NoError(it, json.Unmarshal([]byte(lastLine), &verdict))
+			gotest.Equal(it, "fail", verdict["Action"])
+			gotest.Equal(it, "example.com/pkg", verdict["Package"])
+		})
+	})
+
+	t.When("JSON capture mode", func(w *gotest.T) {
+		w.It("deduplicates package events across suites", func(it *gotest.T) {
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunCaptureJSON, false, gotestrunner.WithWriters(&bytes.Buffer{}, &bytes.Buffer{}))
+			c.Register("example.com/pkg", 2)
+
+			suite1JSON := strings.Join([]string{
+				`{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/pkg","Test":"TestA"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":0.01}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/pkg","Output":"PASS\n"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/pkg","Elapsed":0.01}`,
+			}, "\n") + "\n"
+			suite2JSON := strings.Join([]string{
+				`{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/pkg","Test":"TestB"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"fail","Package":"example.com/pkg","Test":"TestB","Elapsed":0.02}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/pkg","Output":"FAIL\n"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"fail","Package":"example.com/pkg","Elapsed":0.02}`,
+			}, "\n") + "\n"
+
+			c.RecordResult("example.com/pkg", 0, gotestrunner.SuiteResult{
+				Stdout: []byte(suite1JSON), ExitCode: 0, Duration: 10 * time.Millisecond,
+			})
+			c.RecordResult("example.com/pkg", 1, gotestrunner.SuiteResult{
+				Stdout: []byte(suite2JSON), ExitCode: 1, Duration: 20 * time.Millisecond,
+			})
+
+			captured := c.CapturedJSON()
+			lines := strings.Split(strings.TrimRight(string(captured), "\n"), "\n")
+
+			// Count package-level pass/fail events (Test=="")
+			var pkgVerdicts []string
+			for _, line := range lines {
+				var ev map[string]any
+				if json.Unmarshal([]byte(line), &ev) != nil {
+					continue
+				}
+				if ev["Test"] == nil && (ev["Action"] == "pass" || ev["Action"] == "fail") {
+					pkgVerdicts = append(pkgVerdicts, ev["Action"].(string))
+				}
+			}
+
+			gotest.Equal(it, 1, len(pkgVerdicts), "should have exactly one package-level verdict, got: %v", pkgVerdicts)
+			gotest.Equal(it, "fail", pkgVerdicts[0], "package should be marked as fail when any suite fails")
 		})
 	})
 }
@@ -819,56 +953,6 @@ func capturePackageSummary(pkg string, failed bool, d time.Duration, verbose boo
 	return buf.String()
 }
 
-func captureFlush(t *gotest.T, b *gotestrunner.PackageBatcher, pkg string) (stdout, stderr string) {
-	t.T().Helper()
-	oldOut, oldErr := os.Stdout, os.Stderr
-	rOut, wOut, _ := os.Pipe()
-	rErr, wErr, _ := os.Pipe()
-	os.Stdout = wOut
-	os.Stderr = wErr
-
-	b.Flush(pkg)
-
-	wOut.Close()
-	wErr.Close()
-	os.Stdout = oldOut
-	os.Stderr = oldErr
-
-	var bufOut, bufErr bytes.Buffer
-	bufOut.ReadFrom(rOut)
-	bufErr.ReadFrom(rErr)
-	rOut.Close()
-	rErr.Close()
-
-	return bufOut.String(), bufErr.String()
-}
-
-func captureFlushReady(t *gotest.T, b *gotestrunner.PackageBatcher) string {
-	t.T().Helper()
-	r, wr, _ := os.Pipe()
-	old := os.Stdout
-	os.Stdout = wr
-	b.FlushReady()
-	wr.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	r.Close()
-	return buf.String()
-}
-
-func captureStdout(fn func()) string {
-	r, wr, _ := os.Pipe()
-	old := os.Stdout
-	os.Stdout = wr
-	fn()
-	wr.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	r.Close()
-	return buf.String()
-}
 
 // --- output formatting tests ---
 
@@ -977,43 +1061,6 @@ func (s *GotestrunnerTestSuite) TestOutputFormatting(t *gotest.T) {
 		})
 	})
 
-	t.When("writing trailing fail", func(w *gotest.T) {
-		w.It("emits a bare FAIL line", func(it *gotest.T) {
-			got := captureStdout(gotestrunner.WriteTrailingFail)
-			gotest.Equal(it, "FAIL\n", got)
-		})
-	})
-
-	t.When("writing no-test-files annotation", func(w *gotest.T) {
-		w.It("matches go test format", func(it *gotest.T) {
-			got := captureStdout(func() { gotestrunner.WriteNoTestFiles("example.com/empty") })
-			gotest.Equal(it, "?   \texample.com/empty\t[no test files]\n", got)
-		})
-	})
-
-	t.When("writing JSON package summary", func(w *gotest.T) {
-		w.It("emits output action for passing package", func(it *gotest.T) {
-			got := captureStdout(func() {
-				gotestrunner.WriteJSONPackageSummary("example.com/ok", false, 123*time.Millisecond)
-			})
-			var evt map[string]any
-			gotest.NoError(it, json.Unmarshal([]byte(strings.TrimSpace(got)), &evt))
-			gotest.Equal(it, "output", evt["Action"])
-			gotest.Equal(it, "example.com/ok", evt["Package"])
-			gotest.Contains(it, evt["Output"].(string), "ok  \texample.com/ok\t0.123s")
-		})
-
-		w.It("emits output action for failing package", func(it *gotest.T) {
-			got := captureStdout(func() {
-				gotestrunner.WriteJSONPackageSummary("example.com/bad", true, 456*time.Millisecond)
-			})
-			var evt map[string]any
-			gotest.NoError(it, json.Unmarshal([]byte(strings.TrimSpace(got)), &evt))
-			gotest.Equal(it, "output", evt["Action"])
-			gotest.Equal(it, "example.com/bad", evt["Package"])
-			gotest.Contains(it, evt["Output"].(string), "FAIL\texample.com/bad\t0.456s")
-		})
-	})
 }
 
 // --- splitTopLevelOr tests ---
