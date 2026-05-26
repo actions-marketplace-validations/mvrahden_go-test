@@ -257,6 +257,55 @@ func (s *E2ETestSuite) TestTestsuiteCLIExitCode(t *gotest.T) {
 	gotest.True(t, exitErr.ExitCode() != 0, "expected non-zero exit code")
 }
 
+func (s *E2ETestSuite) TestOutputFormatGolden(t *gotest.T) {
+	t.When("non-verbose", func(w *gotest.T) {
+		w.It("single passing package", func(it *gotest.T) {
+			cmd := exec.Command(s.binary, "github.com/mvrahden/go-test/examples/auth")
+			cmd.Dir = filepath.Join(s.workDir, "examples")
+			out, err := cmd.CombinedOutput()
+
+			gotest.NoError(it, err, "auth should pass: %s", string(out))
+			gotest.MatchSnapshot(it, normalizeOutput(string(out), s.workDir))
+		})
+
+		w.It("multi-package mixed with failure", func(it *gotest.T) {
+			failDir := filepath.Join(s.workDir, "examples", "fail_golden")
+			os.MkdirAll(failDir, 0o755)
+			defer os.RemoveAll(failDir)
+			os.WriteFile(filepath.Join(failDir, "ptest_test.go"), []byte(
+				"package failgolden\n\nimport \"github.com/mvrahden/go-test/pkg/gotest\"\n\ntype FailGoldenTestSuite struct{}\n\nfunc (s *FailGoldenTestSuite) TestAlwaysFails(t *gotest.T) { t.FailNow() }\n",
+			), 0o644)
+
+			cmd := exec.Command(s.binary,
+				"github.com/mvrahden/go-test/examples/fail_golden",
+				"github.com/mvrahden/go-test/examples/auth",
+			)
+			cmd.Dir = filepath.Join(s.workDir, "examples")
+			out, _ := cmd.CombinedOutput()
+
+			gotest.MatchSnapshot(it, normalizeOutput(string(out), s.workDir))
+		})
+	})
+
+	t.When("verbose", func(w *gotest.T) {
+		w.It("single passing package", func(it *gotest.T) {
+			cmd := exec.Command(s.binary, "github.com/mvrahden/go-test/examples/auth", "-v", "-parallel", "1")
+			cmd.Dir = filepath.Join(s.workDir, "examples")
+			out, err := cmd.CombinedOutput()
+
+			gotest.NoError(it, err, "auth should pass: %s", string(out))
+			gotest.MatchSnapshot(it, normalizeOutput(string(out), s.workDir))
+		})
+	})
+}
+
+func normalizeOutput(raw string, workDir string) string {
+	s := strings.ReplaceAll(raw, workDir, "<REPLACED>")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	re := regexp.MustCompile(`\d+\.\d+s`)
+	return re.ReplaceAllString(s, "<TIMESTAMP>")
+}
+
 func placeFixture(t *testing.T, tmpDir, srcName, dstRel string) {
 	t.Helper()
 	src, err := testdataFS.Open("testdata/" + srcName)

@@ -1161,3 +1161,206 @@ func (s *GotestrunnerTestSuite) TestSuiteRunFilter(t *gotest.T) {
 		gotest.Equal(sub, tc.expect, got)
 	}
 }
+
+func normalizeJSON(raw string) string {
+	var lines []string
+	for line := range strings.SplitSeq(strings.TrimRight(raw, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var ev map[string]any
+		if json.Unmarshal([]byte(line), &ev) != nil {
+			lines = append(lines, line)
+			continue
+		}
+		ev["Time"] = "«TIME»"
+		if _, ok := ev["Elapsed"]; ok {
+			ev["Elapsed"] = "«ELAPSED»"
+		}
+		if output, ok := ev["Output"].(string); ok {
+			re := regexp.MustCompile(`\d+\.\d+s`)
+			ev["Output"] = re.ReplaceAllString(output, "«TS»")
+		}
+		normalized, _ := json.Marshal(ev)
+		lines = append(lines, string(normalized))
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func (s *GotestrunnerTestSuite) TestOutputGolden(t *gotest.T) {
+	t.When("text non-verbose", func(w *gotest.T) {
+		w.It("single passing package", func(it *gotest.T) {
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &stderr))
+			c.Register("example.com/ok", 1)
+			c.RecordResult("example.com/ok", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte("PASS\n"),
+				ExitCode: 0,
+				Duration: 50 * time.Millisecond,
+			})
+			c.Finalize(nil)
+
+			gotest.MatchSnapshot(it, stdout.String())
+		})
+
+		w.It("single failing package", func(it *gotest.T) {
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &stderr))
+			c.Register("example.com/fail", 1)
+			c.RecordResult("example.com/fail", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte("--- FAIL: TestBad (0.00s)\n    bad_test.go:5: assertion failed\nFAIL\n"),
+				Stderr:   []byte(""),
+				ExitCode: 1,
+				Duration: 100 * time.Millisecond,
+			})
+			c.Finalize(nil)
+
+			gotest.MatchSnapshot(it, stdout.String())
+		})
+
+		w.It("multi-package mixed with no-test-files", func(it *gotest.T) {
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &stderr))
+
+			// Package A: 2 suites — first passes, second fails → package fails
+			c.Register("example.com/a", 2)
+			c.RecordResult("example.com/a", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte("PASS\n"),
+				ExitCode: 0,
+				Duration: 100 * time.Millisecond,
+			})
+			c.RecordResult("example.com/a", 1, gotestrunner.SuiteResult{
+				Stdout:   []byte("--- FAIL: TestBad (0.00s)\n    bad_test.go:5: nope\nFAIL\n"),
+				ExitCode: 1,
+				Duration: 200 * time.Millisecond,
+			})
+
+			// Package B: 1 suite — passes
+			c.Register("example.com/b", 1)
+			c.RecordResult("example.com/b", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte("PASS\n"),
+				ExitCode: 0,
+				Duration: 20 * time.Millisecond,
+			})
+
+			c.Finalize([]string{"example.com/c"})
+
+			gotest.MatchSnapshot(it, stdout.String())
+		})
+	})
+
+	t.When("text verbose", func(w *gotest.T) {
+		w.It("single passing package", func(it *gotest.T) {
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, true, gotestrunner.WithWriters(&stdout, &stderr))
+			c.Register("example.com/ok", 1)
+			c.RecordResult("example.com/ok", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte("=== RUN   TestOK\n--- PASS: TestOK (0.00s)\nPASS\n"),
+				ExitCode: 0,
+				Duration: 50 * time.Millisecond,
+			})
+			c.Finalize(nil)
+
+			gotest.MatchSnapshot(it, stdout.String())
+		})
+
+		w.It("single failing package", func(it *gotest.T) {
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, true, gotestrunner.WithWriters(&stdout, &stderr))
+			c.Register("example.com/fail", 1)
+			c.RecordResult("example.com/fail", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte("=== RUN   TestBad\n--- FAIL: TestBad (0.00s)\n    bad_test.go:5: assertion failed\nFAIL\n"),
+				ExitCode: 1,
+				Duration: 100 * time.Millisecond,
+			})
+			c.Finalize(nil)
+
+			gotest.MatchSnapshot(it, stdout.String())
+		})
+
+		w.It("multi-package mixed with no-test-files", func(it *gotest.T) {
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, true, gotestrunner.WithWriters(&stdout, &stderr))
+
+			// Package A: 2 suites — first passes, second fails
+			c.Register("example.com/a", 2)
+			c.RecordResult("example.com/a", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte("=== RUN   TestGoodA\n--- PASS: TestGoodA (0.00s)\nPASS\n"),
+				ExitCode: 0,
+				Duration: 100 * time.Millisecond,
+			})
+			c.RecordResult("example.com/a", 1, gotestrunner.SuiteResult{
+				Stdout:   []byte("=== RUN   TestBadA\n--- FAIL: TestBadA (0.00s)\n    bad_test.go:5: nope\nFAIL\n"),
+				ExitCode: 1,
+				Duration: 200 * time.Millisecond,
+			})
+
+			// Package B: 1 suite — passes
+			c.Register("example.com/b", 1)
+			c.RecordResult("example.com/b", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte("=== RUN   TestGoodB\n--- PASS: TestGoodB (0.00s)\nPASS\n"),
+				ExitCode: 0,
+				Duration: 20 * time.Millisecond,
+			})
+
+			c.Finalize([]string{"example.com/c"})
+
+			gotest.MatchSnapshot(it, stdout.String())
+		})
+	})
+
+	t.When("json streaming", func(w *gotest.T) {
+		w.It("single passing package", func(it *gotest.T) {
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunStreamJSON, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/ok", 1)
+
+			suiteJSON := strings.Join([]string{
+				`{"Time":"2024-01-01T00:00:00Z","Action":"start","Package":"example.com/ok"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/ok","Test":"TestFoo"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/ok","Test":"TestFoo","Output":"=== RUN   TestFoo\n"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/ok","Test":"TestFoo","Elapsed":0.001}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/ok","Output":"PASS\n"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/ok","Elapsed":0.05}`,
+			}, "\n") + "\n"
+
+			c.RecordResult("example.com/ok", 0, gotestrunner.SuiteResult{
+				Stdout:   []byte(suiteJSON),
+				ExitCode: 0,
+				Duration: 50 * time.Millisecond,
+			})
+
+			gotest.MatchSnapshot(it, normalizeJSON(stdout.String()))
+		})
+
+		w.It("multi-package mixed", func(it *gotest.T) {
+			var stdout bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunStreamJSON, false, gotestrunner.WithWriters(&stdout, &bytes.Buffer{}))
+			c.Register("example.com/a", 1)
+			c.Register("example.com/b", 1)
+
+			passJSON := strings.Join([]string{
+				`{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/a","Test":"TestA"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/a","Test":"TestA","Elapsed":0.001}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/a","Output":"PASS\n"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/a","Elapsed":0.01}`,
+			}, "\n") + "\n"
+
+			failJSON := strings.Join([]string{
+				`{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/b","Test":"TestB"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"fail","Package":"example.com/b","Test":"TestB","Elapsed":0.002}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/b","Output":"FAIL\n"}`,
+				`{"Time":"2024-01-01T00:00:00Z","Action":"fail","Package":"example.com/b","Elapsed":0.02}`,
+			}, "\n") + "\n"
+
+			c.RecordResult("example.com/a", 0, gotestrunner.SuiteResult{
+				Stdout: []byte(passJSON), ExitCode: 0, Duration: 10 * time.Millisecond,
+			})
+			c.RecordResult("example.com/b", 0, gotestrunner.SuiteResult{
+				Stdout: []byte(failJSON), ExitCode: 1, Duration: 20 * time.Millisecond,
+			})
+
+			gotest.MatchSnapshot(it, normalizeJSON(stdout.String()))
+		})
+	})
+}
