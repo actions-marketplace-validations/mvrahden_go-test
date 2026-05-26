@@ -190,6 +190,10 @@
 {"Action":"output","Output":"ok  \tgithub.com/mvrahden/go-test/examples/auth\t\u003cTIMESTAMP\u003e\n","Package":"github.com/mvrahden/go-test/examples/auth","Time":"\u003cTIMESTAMP\u003e"}
 {"Action":"pass","Elapsed":"\u003cTIMESTAMP\u003e","Package":"github.com/mvrahden/go-test/examples/auth","Time":"\u003cTIMESTAMP\u003e"}
 
+=== SNAP TestOutputFormatGolden/non-verbose/multi-package_all_passing ===
+ok  	github.com/mvrahden/go-test/examples/cart	<TIMESTAMP>
+ok  	github.com/mvrahden/go-test/examples/auth	<TIMESTAMP>
+
 === SNAP TestOutputFormatGolden/non-verbose/multi-package_mixed_with_failure ===
 --- FAIL: TestFailGoldenTestSuite (<TIMESTAMP>)
     --- FAIL: TestFailGoldenTestSuite/TestAlwaysFails (<TIMESTAMP>)

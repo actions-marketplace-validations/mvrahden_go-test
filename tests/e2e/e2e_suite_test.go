@@ -123,125 +123,6 @@ func (s *E2ETestSuite) TestTestsuiteCLIAllPackages(t *gotest.T) {
 	gotest.Contains(t, output, "TestNotificationServiceTestSuite")
 }
 
-func (s *E2ETestSuite) TestOutputFormat(t *gotest.T) {
-	pkgSummaryRe := regexp.MustCompile(`^(ok|FAIL)\s+\S+\s+\d+\.\d+s$`)
-
-	t.When("non-verbose mode", func(w *gotest.T) {
-		w.It("produces only summary lines without PASS prefix", func(it *gotest.T) {
-			cmd := exec.Command(s.binary, filepath.Join(s.workDir, "examples", "auth"))
-			cmd.Dir = filepath.Join(s.workDir, "examples")
-			out, err := cmd.CombinedOutput()
-			output := strings.TrimSpace(string(out))
-
-			gotest.NoError(it, err, "auth suite should pass: %s", output)
-
-			lines := strings.Split(output, "\n")
-			for _, line := range lines {
-				gotest.True(it, pkgSummaryRe.MatchString(line),
-					"every line should be a package summary, got: %q", line)
-			}
-			gotest.False(it, strings.Contains(output, "PASS"),
-				"non-verbose output should not contain PASS")
-			gotest.False(it, strings.Contains(output, "=== RUN"),
-				"non-verbose output should not contain verbose test output")
-		})
-
-		w.It("produces summary lines for multiple packages", func(it *gotest.T) {
-			cmd := exec.Command(s.binary, "github.com/mvrahden/go-test/examples/auth", "github.com/mvrahden/go-test/examples/cart")
-			cmd.Dir = filepath.Join(s.workDir, "examples")
-			out, err := cmd.CombinedOutput()
-			output := strings.TrimSpace(string(out))
-
-			gotest.NoError(it, err, "suites should pass: %s", output)
-
-			lines := strings.Split(output, "\n")
-			gotest.Equal(it, 2, len(lines), "expected two summary lines, got: %q", output)
-			for _, line := range lines {
-				gotest.True(it, pkgSummaryRe.MatchString(line),
-					"each line should be a package summary, got: %q", line)
-			}
-		})
-	})
-
-	t.When("verbose mode", func(w *gotest.T) {
-		w.It("includes PASS prefix before ok summary", func(it *gotest.T) {
-			cmd := exec.Command(s.binary, filepath.Join(s.workDir, "examples", "auth"), "-v")
-			cmd.Dir = filepath.Join(s.workDir, "examples")
-			out, err := cmd.CombinedOutput()
-			output := string(out)
-
-			gotest.NoError(it, err, "auth suite should pass: %s", output)
-			gotest.Contains(it, output, "=== RUN")
-			gotest.Contains(it, output, "--- PASS:")
-			gotest.Contains(it, output, "PASS\nok  \t")
-		})
-	})
-
-	t.When("failing tests", func(w *gotest.T) {
-		w.It("shows failure output even without -v", func(it *gotest.T) {
-			failDir := filepath.Join(s.workDir, "examples", "fail_fmt")
-			os.MkdirAll(failDir, 0o755)
-			defer os.RemoveAll(failDir)
-			os.WriteFile(filepath.Join(failDir, "ptest_test.go"), []byte(
-				"package failfmt\n\nimport \"github.com/mvrahden/go-test/pkg/gotest\"\n\ntype FailFmtTestSuite struct{}\n\nfunc (s *FailFmtTestSuite) TestAlwaysFails(t *gotest.T) { t.FailNow() }\n",
-			), 0o644)
-
-			cmd := exec.Command(s.binary, failDir)
-			cmd.Dir = filepath.Join(s.workDir, "examples")
-			out, _ := cmd.CombinedOutput()
-			output := string(out)
-
-			gotest.Contains(it, output, "FAIL")
-			gotest.Contains(it, output, "--- FAIL:")
-		})
-
-		w.It("emits trailing FAIL after all packages when any fails", func(it *gotest.T) {
-			failDir := filepath.Join(s.workDir, "examples", "fail_trail")
-			os.MkdirAll(failDir, 0o755)
-			defer os.RemoveAll(failDir)
-			os.WriteFile(filepath.Join(failDir, "ptest_test.go"), []byte(
-				"package failtrail\n\nimport \"github.com/mvrahden/go-test/pkg/gotest\"\n\ntype FailTrailTestSuite struct{}\n\nfunc (s *FailTrailTestSuite) TestAlwaysFails(t *gotest.T) { t.FailNow() }\n",
-			), 0o644)
-
-			cmd := exec.Command(s.binary, filepath.Join(s.workDir, "examples", "auth"), failDir)
-			cmd.Dir = filepath.Join(s.workDir, "examples")
-			out, _ := cmd.CombinedOutput()
-			output := string(out)
-
-			lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
-			gotest.Equal(it, "FAIL", lines[len(lines)-1],
-				"last line should be trailing FAIL, got output: %q", output)
-		})
-	})
-
-	t.When("package ordering", func(w *gotest.T) {
-		w.It("outputs packages in argument order for multiple packages", func(it *gotest.T) {
-			cmd := exec.Command(s.binary,
-				"github.com/mvrahden/go-test/examples/cart",
-				"github.com/mvrahden/go-test/examples/auth",
-			)
-			cmd.Dir = filepath.Join(s.workDir, "examples")
-			out, err := cmd.CombinedOutput()
-			output := strings.TrimSpace(string(out))
-
-			gotest.NoError(it, err, "suites should pass: %s", output)
-
-			lines := strings.Split(output, "\n")
-			gotest.True(it, len(lines) >= 2, "expected at least 2 lines, got: %q", output)
-			gotest.Contains(it, lines[0], "examples/cart",
-				"first line should be cart (listed first), got: %q", lines[0])
-			gotest.Contains(it, lines[1], "examples/auth",
-				"second line should be auth (listed second), got: %q", lines[1])
-		})
-	})
-
-	t.When("cached results", func(w *gotest.T) {
-		w.It("shows (cached) on second run", func(it *gotest.T) {
-			it.T().Skip("cache support not yet implemented")
-		})
-	})
-}
-
 func (s *E2ETestSuite) TestTestsuiteCLIExitCode(t *gotest.T) {
 	failDir := filepath.Join(s.workDir, "examples", "fail_suite")
 	os.MkdirAll(failDir, 0o755)
@@ -266,6 +147,18 @@ func (s *E2ETestSuite) TestOutputFormatGolden(t *gotest.T) {
 			out, err := cmd.CombinedOutput()
 
 			gotest.NoError(it, err, "auth should pass: %s", string(out))
+			gotest.MatchSnapshot(it, normalizeOutput(string(out), s.workDir))
+		})
+
+		w.It("multi-package all passing", func(it *gotest.T) {
+			cmd := exec.Command(s.binary,
+				"github.com/mvrahden/go-test/examples/cart",
+				"github.com/mvrahden/go-test/examples/auth",
+			)
+			cmd.Dir = filepath.Join(s.workDir, "examples")
+			out, err := cmd.CombinedOutput()
+
+			gotest.NoError(it, err, "both packages should pass: %s", string(out))
 			gotest.MatchSnapshot(it, normalizeOutput(string(out), s.workDir))
 		})
 
