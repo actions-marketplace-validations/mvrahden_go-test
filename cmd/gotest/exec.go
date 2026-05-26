@@ -19,6 +19,7 @@ type overlayResult struct {
 	overlayFlag      string
 	sharedFixtures   []gotestgen.SharedFixtureInfo
 	suitePackages    []string
+	noSuitePackages  []string                     // loaded packages that had no suites
 	suitesByPkg      map[string][]string          // import path → suite struct names
 	dirsByPkg        map[string]string             // import path → package source directory
 	fixtureDepSuites map[string]map[string]bool   // import path → set of test func names needing shared fixtures
@@ -44,12 +45,15 @@ func generateOverlayFromLoaded(loaded []*gotestgen.LoadResult, debug bool) (*ove
 	}
 
 	var suitePkgs []string
+	var noSuitePkgs []string
 	suitesByPkg := map[string][]string{}
 	dirsByPkg := map[string]string{}
 	fixtureDepSuites := map[string]map[string]bool{}
 	for _, r := range allResults {
 		if len(r.PTest) > 0 || len(r.PXTest) > 0 {
 			suitePkgs = append(suitePkgs, r.PkgPath)
+		} else {
+			noSuitePkgs = append(noSuitePkgs, r.PkgPath)
 		}
 		if len(r.SuiteNames) > 0 {
 			suitesByPkg[r.PkgPath] = r.SuiteNames
@@ -71,6 +75,7 @@ func generateOverlayFromLoaded(loaded []*gotestgen.LoadResult, debug bool) (*ove
 		overlayFlag:      "-overlay=" + filepath.Join(tmpDir, "overlay.json"),
 		sharedFixtures:   allSharedFixtures,
 		suitePackages:    suitePkgs,
+		noSuitePackages:  noSuitePkgs,
 		suitesByPkg:      suitesByPkg,
 		dirsByPkg:        dirsByPkg,
 		fixtureDepSuites: fixtureDepSuites,
@@ -145,15 +150,17 @@ func prepareTestRun(ctx context.Context, overlay *overlayResult, buildFlags []st
 }
 
 type parsedFlags struct {
-	buildFlags      []string
-	runFlags        []string
-	userRunFilter   string
+	buildFlags       []string
+	runFlags         []string
+	userRunFilter    string
 	userCoverProfile string
+	verbose          bool
 }
 
 func parseExecFlags(goTestArgs []string) parsedFlags {
 	classified := gotestrunner.ClassifyGoTestArgs(goTestArgs)
 	classified.BuildFlags = gotestrunner.InjectChecklinkname(classified.BuildFlags)
+	verbose := gotestrunner.HasVerboseFlag(classified.RunFlags)
 	userRunFilter := gotestrunner.ExtractRunFilter(classified.RunFlags)
 	runFlags := gotestrunner.StripRunFilter(classified.RunFlags)
 	userCoverProfile := gotestrunner.ExtractCoverProfile(runFlags)
@@ -164,6 +171,7 @@ func parseExecFlags(goTestArgs []string) parsedFlags {
 		runFlags:         runFlags,
 		userRunFilter:    userRunFilter,
 		userCoverProfile: userCoverProfile,
+		verbose:          verbose,
 	}
 }
 
@@ -235,8 +243,10 @@ func executeTests(ctx context.Context, cfg ExecConfig, overlay *overlayResult) (
 	if cfg.JSON {
 		mode = gotestrunner.RunStreamJSON
 	}
-	_, code := gotestrunner.RunSuites(ctx, targets, extraEnv, 0, mode)
-	return code, nil
+	collector := gotestrunner.NewOutputCollector(mode, pf.verbose)
+	gotestrunner.RunSuites(ctx, targets, extraEnv, 0, collector)
+	collector.Finalize(overlay.noSuitePackages)
+	return collector.WorstExitCode(), nil
 }
 
 func executeTestsStreaming(ctx context.Context, cfg ExecConfig, overlay *overlayResult) (int, error) {
@@ -271,9 +281,7 @@ func executeTestsStreaming(ctx context.Context, cfg ExecConfig, overlay *overlay
 
 	maxParallel := 2 * runtime.GOMAXPROCS(0)
 	sem := make(chan struct{}, maxParallel)
-	var mu sync.Mutex
 	var wg sync.WaitGroup
-	worstCode := 0
 	anyTargets := false
 	var allTargets []gotestrunner.SuiteTarget
 
@@ -304,10 +312,12 @@ func executeTestsStreaming(ctx context.Context, cfg ExecConfig, overlay *overlay
 		return fixtureEnv, fixtureEnvErr
 	}
 
-	var batcher *gotestrunner.PackageBatcher
-	if !cfg.JSON {
-		batcher = gotestrunner.NewPackageBatcher()
+	mode := gotestrunner.RunBatchText
+	if cfg.JSON {
+		mode = gotestrunner.RunStreamJSON
 	}
+	collector := gotestrunner.NewOutputCollector(mode, pf.verbose)
+	collector.SetFlushOrder(overlay.suitePackages)
 
 loop:
 	for {
@@ -343,11 +353,7 @@ loop:
 			allTargets = append(allTargets, targets...)
 		}
 
-		if batcher != nil {
-			mu.Lock()
-			batcher.Register(cr.Package, len(targets))
-			mu.Unlock()
-		}
+		collector.Register(cr.Package, len(targets))
 
 		for i, target := range targets {
 			wg.Add(1)
@@ -373,20 +379,8 @@ loop:
 				}
 				defer func() { <-sem }()
 
-				r := gotestrunner.RunSingleSuite(streamCtx, t, env, cfg.JSON)
-				mu.Lock()
-				if r.ExitCode > worstCode {
-					worstCode = r.ExitCode
-				}
-				if cfg.JSON {
-					os.Stdout.Write(r.Stdout)
-					if len(r.Stderr) > 0 {
-						os.Stderr.Write(r.Stderr)
-					}
-				} else if batcher.Record(t.Package, idx, r) {
-					batcher.Flush(t.Package)
-				}
-				mu.Unlock()
+				r := gotestrunner.RunSingleSuite(streamCtx, t, env, collector.UsesTest2JSON())
+				collector.RecordResult(t.Package, idx, r)
 			}(target, i)
 		}
 	}
@@ -401,14 +395,16 @@ loop:
 		mergeCoverProfiles(allTargets, pf.userCoverProfile)
 	}
 
-	if !anyTargets {
+	if !anyTargets && len(overlay.noSuitePackages) == 0 {
 		if !cfg.JSON {
 			fmt.Fprintln(os.Stderr, "no test suites to run")
 		}
 		return 0, nil
 	}
 
-	return worstCode, nil
+	collector.Finalize(overlay.noSuitePackages)
+
+	return collector.WorstExitCode(), nil
 }
 
 func executeTestsCaptured(ctx context.Context, cfg ExecConfig, overlay *overlayResult) ([]byte, int, error) {
@@ -447,8 +443,9 @@ func executeTestsCaptured(ctx context.Context, cfg ExecConfig, overlay *overlayR
 		defer mergeCoverProfiles(targets, pf.userCoverProfile)
 	}
 
-	data, code := gotestrunner.RunSuites(ctx, targets, extraEnv, 0, gotestrunner.RunCaptureJSON)
-	return data, code, nil
+	collector := gotestrunner.NewOutputCollector(gotestrunner.RunCaptureJSON, false)
+	gotestrunner.RunSuites(ctx, targets, extraEnv, 0, collector)
+	return collector.CapturedJSON(), collector.WorstExitCode(), nil
 }
 
 func Run(cfg ExecConfig) int {

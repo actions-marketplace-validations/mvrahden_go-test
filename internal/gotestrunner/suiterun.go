@@ -53,90 +53,31 @@ const (
 	RunCaptureJSON
 )
 
-// PackageBatcher collects per-suite results and flushes output when all
-// suites for a package have completed. Results are stored at fixed indices
-// to guarantee deterministic output order regardless of goroutine scheduling.
-//
-// All methods must be called under a single external mutex.
-type PackageBatcher struct {
-	pkgs map[string]*pkgBatch
-}
-
-type pkgBatch struct {
-	expected  int
-	completed int
-	results   []SuiteResult
-}
-
-func NewPackageBatcher() *PackageBatcher {
-	return &PackageBatcher{pkgs: map[string]*pkgBatch{}}
-}
-
-// Register prepares the batcher for a package with count suites.
-func (b *PackageBatcher) Register(pkg string, count int) {
-	b.pkgs[pkg] = &pkgBatch{
-		expected: count,
-		results:  make([]SuiteResult, count),
-	}
-}
-
-// Record stores a result at position idx within its package.
-// Returns true when all suites for that package are now complete.
-func (b *PackageBatcher) Record(pkg string, idx int, r SuiteResult) bool {
-	s := b.pkgs[pkg]
-	s.results[idx] = r
-	s.completed++
-	return s.completed == s.expected
-}
-
-// Flush writes the completed package's output to stdout: each suite's output
-// with trailing status stripped, followed by the package summary line.
-func (b *PackageBatcher) Flush(pkg string) {
-	s := b.pkgs[pkg]
-	pkgFailed := false
-	var pkgDuration time.Duration
-	for _, pr := range s.results {
-		os.Stdout.Write(StripTrailingStatus(pr.Stdout))
-		if len(pr.Stderr) > 0 {
-			os.Stderr.Write(pr.Stderr)
-		}
-		if pr.ExitCode != 0 {
-			pkgFailed = true
-		}
-		pkgDuration += pr.Duration
-	}
-	WritePackageSummary(pkg, pkgFailed, pkgDuration)
-}
-
 // RunSuites executes each suite target in its own subprocess with bounded
-// concurrency. The mode parameter controls output format and delivery.
-// The returned []byte is non-nil only for RunCaptureJSON.
-func RunSuites(ctx context.Context, targets []SuiteTarget, extraEnv map[string]string, maxParallel int, mode RunMode) ([]byte, int) {
+// concurrency. Results are recorded via the collector, which handles
+// mode-specific output formatting, JSON event filtering, and package ordering.
+func RunSuites(ctx context.Context, targets []SuiteTarget, extraEnv map[string]string, maxParallel int, collector *OutputCollector) {
 	if maxParallel <= 0 {
 		maxParallel = 2 * runtime.GOMAXPROCS(0)
 	}
 
-	useTest2JSON := mode != RunBatchText
-
-	var batcher *PackageBatcher
-	var localIdx []int
-	if mode == RunBatchText {
-		batcher = NewPackageBatcher()
-		pkgCount := map[string]int{}
-		localIdx = make([]int, len(targets))
-		for i, t := range targets {
-			localIdx[i] = pkgCount[t.Package]
-			pkgCount[t.Package]++
+	pkgCount := map[string]int{}
+	var pkgOrder []string
+	localIdx := make([]int, len(targets))
+	for i, t := range targets {
+		if _, seen := pkgCount[t.Package]; !seen {
+			pkgOrder = append(pkgOrder, t.Package)
 		}
-		for pkg, count := range pkgCount {
-			batcher.Register(pkg, count)
-		}
+		localIdx[i] = pkgCount[t.Package]
+		pkgCount[t.Package]++
+	}
+	for _, pkg := range pkgOrder {
+		collector.Register(pkg, pkgCount[pkg])
 	}
 
-	var merged bytes.Buffer
-	var mu sync.Mutex
+	useTest2JSON := collector.UsesTest2JSON()
+
 	var wg sync.WaitGroup
-	var worstCode int
 	sem := make(chan struct{}, maxParallel)
 
 	env := os.Environ()
@@ -155,30 +96,10 @@ func RunSuites(ctx context.Context, targets []SuiteTarget, extraEnv map[string]s
 			}
 			defer func() { <-sem }()
 			r := RunSingleSuite(ctx, t, env, useTest2JSON)
-
-			mu.Lock()
-			if r.ExitCode > worstCode {
-				worstCode = r.ExitCode
-			}
-			switch mode {
-			case RunBatchText:
-				if batcher.Record(t.Package, localIdx[idx], r) {
-					batcher.Flush(t.Package)
-				}
-			case RunStreamJSON:
-				os.Stdout.Write(r.Stdout)
-				if len(r.Stderr) > 0 {
-					os.Stderr.Write(r.Stderr)
-				}
-			case RunCaptureJSON:
-				merged.Write(r.Stdout)
-			}
-			mu.Unlock()
+			collector.RecordResult(t.Package, localIdx[idx], r)
 		}(i, target)
 	}
 	wg.Wait()
-
-	return merged.Bytes(), worstCode
 }
 
 func buildSuiteCmd(ctx context.Context, target SuiteTarget, env []string, test2json bool) *exec.Cmd {
@@ -315,11 +236,13 @@ func StripTrailingStatus(data []byte) []byte {
 	return data
 }
 
-func WritePackageSummary(pkg string, failed bool, d time.Duration) {
+func WritePackageSummary(pkg string, failed bool, d time.Duration, verbose bool) {
 	if failed {
 		fmt.Fprintf(os.Stdout, "FAIL\nFAIL\t%s\t%.3fs\n", pkg, d.Seconds())
-	} else {
+	} else if verbose {
 		fmt.Fprintf(os.Stdout, "PASS\nok  \t%s\t%.3fs\n", pkg, d.Seconds())
+	} else {
+		fmt.Fprintf(os.Stdout, "ok  \t%s\t%.3fs\n", pkg, d.Seconds())
 	}
 }
 
