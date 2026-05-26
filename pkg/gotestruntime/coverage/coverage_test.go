@@ -1,4 +1,4 @@
-package coverage
+package coverage //nolint:stdlib-test
 
 import (
 	"testing"
