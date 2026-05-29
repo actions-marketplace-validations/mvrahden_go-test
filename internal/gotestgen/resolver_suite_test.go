@@ -302,7 +302,7 @@ func (s *ResolverTestSuite) TestResolutionErrors(t *gotest.T) {
 	})
 
 	t.When("suite references multiple fixtures", func(w *gotest.T) {
-		w.It("returns an error", func(it *gotest.T) {
+		w.It("resolves all fixtures", func(it *gotest.T) {
 			pkg := gotestgen.ExportMustTestPkg(it.T(), "TestResolve_MultipleFixturesPerSuite")
 			c := gotestgen.NewCollector()
 			result := c.CollectSuiteSpecs(pkg)
@@ -311,9 +311,13 @@ func (s *ResolverTestSuite) TestResolutionErrors(t *gotest.T) {
 			spec, err := c.ApplyTestSuiteSpecs(result)
 			gotest.NoError(it, err)
 
-			_, err = gotestgen.Resolve(pkg, spec.EffectiveTestSuites, result.Fixtures)
-			gotest.Error(it, err)
-			gotest.Contains(it, err.Error(), "multiple fixtures")
+			resolved, err := gotestgen.Resolve(pkg, spec.EffectiveTestSuites, result.Fixtures)
+			gotest.NoError(it, err)
+			gotest.Equal(it, 2, len(resolved.RootFixtures))
+			gotest.Equal(it, 1, len(resolved.FixtureBound))
+
+			bindings := resolved.SuiteFixtureFields["MultiTestSuite"]
+			gotest.Equal(it, 2, len(bindings))
 		})
 	})
 
@@ -334,8 +338,8 @@ func (s *ResolverTestSuite) TestResolutionErrors(t *gotest.T) {
 	})
 
 	t.When("fixture has multiple parent fixtures", func(w *gotest.T) {
-		w.It("returns an error", func(it *gotest.T) {
-			pkg := gotestgen.ExportMustTestPkg(it.T(), "TestResolve_MultipleParentFixtures_Error")
+		w.It("resolves all parent fixtures", func(it *gotest.T) {
+			pkg := gotestgen.ExportMustTestPkg(it.T(), "TestResolve_MultipleParentFixtures")
 			c := gotestgen.NewCollector()
 			result := c.CollectSuiteSpecs(pkg)
 			gotest.Equal(it, 0, len(result.Errs))
@@ -343,9 +347,27 @@ func (s *ResolverTestSuite) TestResolutionErrors(t *gotest.T) {
 			spec, err := c.ApplyTestSuiteSpecs(result)
 			gotest.NoError(it, err)
 
-			_, err = gotestgen.Resolve(pkg, spec.EffectiveTestSuites, result.Fixtures)
-			gotest.Error(it, err)
-			gotest.Contains(it, err.Error(), "multiple fixtures")
+			resolved, err := gotestgen.Resolve(pkg, spec.EffectiveTestSuites, result.Fixtures)
+			gotest.NoError(it, err)
+			gotest.Equal(it, 2, len(resolved.RootFixtures), "A and B should be roots")
+			gotest.Equal(it, 1, len(resolved.FixtureBound))
+		})
+	})
+
+	t.When("diamond dependency", func(w *gotest.T) {
+		w.It("deduplicates shared ancestor", func(it *gotest.T) {
+			pkg := gotestgen.ExportMustTestPkg(it.T(), "TestResolve_DiamondDependency")
+			c := gotestgen.NewCollector()
+			result := c.CollectSuiteSpecs(pkg)
+			gotest.Equal(it, 0, len(result.Errs))
+
+			spec, err := c.ApplyTestSuiteSpecs(result)
+			gotest.NoError(it, err)
+
+			resolved, err := gotestgen.Resolve(pkg, spec.EffectiveTestSuites, result.Fixtures)
+			gotest.NoError(it, err)
+			gotest.Equal(it, 1, len(resolved.RootFixtures), "DB should be the only root")
+			gotest.Equal(it, 3, len(resolved.AllFixtures))
 		})
 	})
 
