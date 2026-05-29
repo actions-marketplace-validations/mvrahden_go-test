@@ -633,37 +633,48 @@ gotest.MatchSnapshot(t, render(other), <span class="st">"variant"</span>)  <span
 Fixture.AfterEach</div>
 
       <h3>Nesting</h3>
-      <p>Fixtures compose through named pointer fields — the same pattern suites use to reference fixtures. A child fixture points to its parent, and the generator wires the lifecycle automatically:</p>
+      <p>Fixtures compose through named pointer fields — the same pattern suites use to reference fixtures. A fixture can depend on multiple other fixtures, forming a directed acyclic graph (DAG). The generator resolves dependencies and wires the lifecycle automatically:</p>
       <div class="code-block">
-        <pre><span class="kw">type</span> <span class="tp">InfraFixture</span> <span class="kw">struct</span> {
+        <pre><span class="kw">type</span> <span class="tp">DBFixture</span> <span class="kw">struct</span> {
     Pool *pgxpool.Pool
 }
 
-<span class="kw">func</span> (f *<span class="tp">InfraFixture</span>) <span class="fn">BeforeAll</span>(ctx context.Context) <span class="tp">error</span> {
+<span class="kw">func</span> (f *<span class="tp">DBFixture</span>) <span class="fn">BeforeAll</span>(ctx context.Context) <span class="tp">error</span> {
     <span class="cm">// start database container, populate f.Pool</span>
 }
 
+<span class="kw">type</span> <span class="tp">CacheFixture</span> <span class="kw">struct</span> {
+    Client *redis.Client
+}
+
+<span class="kw">func</span> (f *<span class="tp">CacheFixture</span>) <span class="fn">BeforeAll</span>(ctx context.Context) <span class="tp">error</span> {
+    <span class="cm">// start Redis container, populate f.Client</span>
+}
+
 <span class="kw">type</span> <span class="tp">APIFixture</span> <span class="kw">struct</span> {
-    Infra     *InfraFixture <span class="cm">// named field — wired automatically</span>
+    DB        *DBFixture    <span class="cm">// dependency — wired automatically</span>
+    Cache     *CacheFixture <span class="cm">// dependency — wired automatically</span>
     ServerURL <span class="tp">string</span>
 }
 
 <span class="kw">func</span> (f *<span class="tp">APIFixture</span>) <span class="fn">BeforeAll</span>(ctx context.Context) <span class="tp">error</span> {
-    <span class="cm">// start API server using f.Infra.Pool</span>
+    <span class="cm">// start API server using f.DB.Pool and f.Cache.Client</span>
 }
 
 <span class="kw">type</span> <span class="tp">OrderTestSuite</span> <span class="kw">struct</span> {
-    Fixture *APIFixture <span class="cm">// accesses f.Infra.Pool and f.ServerURL</span>
+    Fixture *APIFixture <span class="cm">// accesses DB, Cache, and ServerURL</span>
 }</pre>
       </div>
-      <p>The parent's hooks run first, wrapping the child's. The suite sees the fully initialized fixture chain:</p>
-      <div class="diagram">InfraFixture.BeforeAll
-  <span class="d">└──</span> APIFixture.BeforeAll
-        <span class="d">└──</span> Suite.BeforeAll
-              <span class="d">├──</span> Suite.BeforeEach <span class="d">→</span> Test <span class="d">→</span> Suite.AfterEach
-        <span class="d">└──</span> Suite.AfterAll
-  <span class="d">└──</span> APIFixture.AfterAll
-InfraFixture.AfterAll</div>
+      <p>Setup runs in topological order. Independent fixtures (no edges between them) set up in parallel; teardown runs in reverse:</p>
+      <div class="diagram">DBFixture.BeforeAll <span class="d">──┐</span>
+                        <span class="d">├──</span> APIFixture.BeforeAll
+CacheFixture.BeforeAll <span class="d">┘</span>
+                             <span class="d">└──</span> Suite.BeforeAll
+                                   <span class="d">├──</span> Suite.BeforeEach <span class="d">→</span> Test <span class="d">→</span> Suite.AfterEach
+                             <span class="d">└──</span> Suite.AfterAll
+                        <span class="d">┌──</span> APIFixture.AfterAll
+DBFixture.AfterAll <span class="d">────┘</span>
+CacheFixture.AfterAll <span class="d">─┘</span></div>
 
       <h3>Shared fixtures</h3>
       <p>Structs ending in <code>SharedFixture</code> run in a subprocess and share state across packages via JSON serialization. Resources that can't serialize (connection pools, caches) are reconstructed in each test process via <code>Hydrate</code>:</p>

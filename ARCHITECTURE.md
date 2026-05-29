@@ -166,15 +166,16 @@ Resolve(targetPkg, suites, localFixtures)
   │       ├─ Lookup method set: BeforeAll (required), AfterAll,
   │       │   BeforeEach, AfterEach, Hydrate, Dehydrate, Config
   │       └─ Recurse into fixture struct fields for:
-  │           ├─ Parent fixture (at most one, builds tree)
+  │           ├─ Parent fixtures (zero or more, builds DAG)
   │           └─ SharedFixture references
   │
   ├─ Suite gets linked: fixture.ChildSuites ← append(suite)
   └─ Suite categorized: FixtureBound or Standalone
 ```
 
-Constraint: at most **one root PackageFixture per package**.
-Fixtures form a single-inheritance tree (parent via embedding).
+Fixtures form a **DAG** (directed acyclic graph) via embedding: a fixture may
+have multiple parents, and suites may reference multiple fixtures. The same
+fixture type is deduplicated by identity so each fixture is set up exactly once.
 
 ### What Gets Generated
 
@@ -206,14 +207,17 @@ For **fixture-bound suites** (have a fixture), a `TestMain` is generated:
 func TestMain(m *testing.M) { os.Exit(ƒƒ_GOTEST_main(m)) }
 
 func ƒƒ_GOTEST_main(m *testing.M) (code int) {
+    // Fixtures is a flat list with DependsOn edges forming a DAG.
     // 1. Read shared fixture state (if needed)
-    // 2. Instantiate root fixture
-    // 3. BeforeAll on root fixture (with retries, timeout)
-    // 4. Instantiate child fixtures (concurrent)
-    // 5. BeforeAll on each child fixture (concurrent, with retries)
-    // 6. Compute teardown budget → write to budget file
-    // 7. code = m.Run()   ← runs all TestXxx functions
-    // 8. defer: AfterAll children (concurrent), then AfterAll root
+    // 2. Instantiate all fixtures from Fixtures list
+    // 3. DAG wavefront setup: fixtures with no dependencies start
+    //    concurrently; each fixture starts after its DependsOn set
+    //    has completed (channel-based signalling)
+    // 4. BeforeAll on each fixture (with retries, timeout)
+    // 5. Compute teardown budget → write to budget file
+    // 6. code = m.Run()   ← runs all TestXxx functions
+    // 7. defer: reverse-wavefront teardown (leaves first,
+    //    roots last; independent fixtures tear down concurrently)
 }
 ```
 
@@ -229,13 +233,19 @@ without modifying source. Go's compiler reads virtual paths from the overlay.
 ```
 ┌──────────────────── PER PACKAGE (via TestMain) ─────────────────────┐
 │                                                                      │
-│  ┌─ RootFixture.BeforeAll(ctx) ─────────────────────────────────┐   │
-│  │  timeout: FixtureConfig.Timeout (default 2m)                 │   │
-│  │  retries: FixtureConfig.Retries (default 0)                  │   │
-│  │                                                               │   │
-│  │  ┌─ ChildFixture.BeforeAll(ctx) ──────────────────────┐      │   │
-│  │  │  (runs concurrently with sibling child fixtures)    │      │   │
-│  │  └────────────────────────────────────────────────────┘      │   │
+│  DAG wavefront setup (channel-based parallel scheduling):            │
+│                                                                      │
+│  wave 0 (no dependencies):                                           │
+│  ┌─ FixtureA.BeforeAll(ctx) ─┐  ┌─ FixtureB.BeforeAll(ctx) ─┐     │
+│  │  timeout: Config.Timeout  │  │  timeout: Config.Timeout   │     │
+│  │  retries: Config.Retries  │  │  retries: Config.Retries   │     │
+│  └───────────┬───────────────┘  └───────────┬────────────────┘     │
+│              │ done(ch)                      │ done(ch)              │
+│              └──────────┬────────────────────┘                      │
+│                         ▼                                            │
+│  wave 1 (depends on A and B):                                        │
+│  ┌─ FixtureC.BeforeAll(ctx) ────────────────────────────────────┐   │
+│  │  blocks until all DependsOn channels signal                  │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                      │
 │  ┌──── PER SUITE (each TestXxxTestSuite function) ──────────────┐   │
@@ -256,8 +266,9 @@ without modifying source. Go's compiler reads virtual paths from the overlay.
 │  │                                                               │   │
 │  └───────────────────────────────────────────────────────────────┘   │
 │                                                                      │
-│  deferred: ChildFixture.AfterAll(ctx)  ← concurrent                 │
-│  deferred: RootFixture.AfterAll(ctx)   ← after children complete    │
+│  deferred: reverse-wavefront teardown                                │
+│    wave 0: FixtureC.AfterAll(ctx)  ← leaves first                   │
+│    wave 1: FixtureA.AfterAll(ctx), FixtureB.AfterAll(ctx)  ← conc.  │
 │  deferred: flush coverage counters                                   │
 │                                                                      │
 └──────────────────────────────────────────────────────────────────────┘

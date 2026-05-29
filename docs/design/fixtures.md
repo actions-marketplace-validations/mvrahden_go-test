@@ -47,11 +47,16 @@ func (s *BatchTestSuite) TestDispatch(t *gotest.T) {
 
 ### Rules
 
-- One root `*Fixture` per package (nested child fixtures are allowed).
+- A package may define multiple fixtures. Suites can reference any combination of them.
+- Fixtures can depend on multiple other fixtures, forming a DAG (directed acyclic graph).
+  If two fixtures share a common ancestor type, that ancestor is instantiated once (diamond deduplication).
 - The fixture struct must have `BeforeAll(ctx context.Context) error`.
   `AfterAll(ctx context.Context) error` is optional.
 - `BeforeEach(ctx context.Context) error` and `AfterEach(ctx context.Context) error` are optional and run around every test case in all child suites.
-- TestSuites reference the fixture via a named pointer field (`Fixture *E2ESetupFixture`).
+- Setup runs in topological order (dependencies first; independent fixtures in parallel).
+  Teardown runs in reverse topological order.
+- TestSuites reference fixtures via named pointer fields (`Fixture *E2ESetupFixture`).
+  A suite may have multiple fixture fields.
 - The code generator owns `TestMain` when a fixture is present.
   Remove any user-defined `TestMain`.
 
@@ -67,10 +72,13 @@ TestKeyTestSuite/TestCreate            PASS
 
 Filter with `-run TestBatchTestSuite` to run only batch tests.
 
-## Nested Fixtures (Level 2)
+## Fixture Dependencies (Level 2)
 
-Fixtures can reference other fixtures via named pointer fields to form a dependency tree.
-The root fixture's `BeforeAll` runs first, then each child fixture's `BeforeAll`.
+Fixtures can reference other fixtures via named pointer fields to form a DAG.
+Setup runs in topological order (dependencies first; independent fixtures in parallel).
+Teardown runs in reverse topological order.
+
+### Single parent (simple chain)
 
 ```go
 type InfraFixture struct {
@@ -93,6 +101,78 @@ func (f *APIFixture) BeforeAll(ctx context.Context) error {
 
 type ReconcilerTestSuite struct { Infra *InfraFixture }  // only needs DB
 type BatchTestSuite struct { API *APIFixture }            // needs full API
+```
+
+### Multiple parents
+
+A fixture can depend on multiple other fixtures:
+
+```go
+type DatabaseFixture struct {
+    Pool *pgxpool.Pool
+}
+
+func (f *DatabaseFixture) BeforeAll(ctx context.Context) error { /* start postgres */ return nil }
+func (f *DatabaseFixture) AfterAll(ctx context.Context) error  { /* terminate postgres */ return nil }
+
+type CacheFixture struct {
+    Client *redis.Client
+}
+
+func (f *CacheFixture) BeforeAll(ctx context.Context) error { /* start redis */ return nil }
+func (f *CacheFixture) AfterAll(ctx context.Context) error  { /* terminate redis */ return nil }
+
+type ServiceFixture struct {
+    DB        *DatabaseFixture
+    Cache     *CacheFixture
+    ServerURL string
+}
+
+func (f *ServiceFixture) BeforeAll(ctx context.Context) error {
+    // f.DB.Pool and f.Cache.Client are already initialized
+    srv := service.New(f.DB.Pool, f.Cache.Client)
+    f.ServerURL = srv.URL
+    return nil
+}
+```
+
+Setup order: `DatabaseFixture` and `CacheFixture` run in parallel, then `ServiceFixture`.
+
+### Diamond deduplication
+
+When two fixtures share a common ancestor, the ancestor is instantiated once:
+
+```go
+type InfraFixture struct { Pool *pgxpool.Pool }
+
+type APIFixture struct {
+    Infra     *InfraFixture
+    ServerURL string
+}
+
+type WorkerFixture struct {
+    Infra    *InfraFixture
+    QueueURL string
+}
+
+type IntegrationTestSuite struct {
+    API    *APIFixture
+    Worker *WorkerFixture
+}
+```
+
+Both `APIFixture` and `WorkerFixture` depend on `InfraFixture`.
+The framework creates one `InfraFixture` instance and injects it into both.
+
+### Suites with multiple fixtures
+
+A suite can reference multiple fixtures directly:
+
+```go
+type OrderTestSuite struct {
+    API   *APIFixture
+    Cache *CacheFixture
+}
 ```
 
 ### Generated test output

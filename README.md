@@ -288,15 +288,16 @@ Setup hooks (`BeforeAll`, `BeforeEach`) receive `t.Context()` — cancelled when
 Cleanup hooks (`AfterAll`, `AfterEach`) receive `context.Background()` — cleanup must proceed even after the test context is cancelled.
 Requires Go 1.24+.
 
-Test suites reference the fixture via a named pointer field:
+Test suites reference fixtures via named pointer fields — one or more:
 
 ```go
 type BatchTestSuite struct {
-    Fixture *E2ESetupFixture
+    Setup *E2ESetupFixture
+    Cache *CacheFixture
 }
 
 func (s *BatchTestSuite) TestDispatch(t *gotest.T) {
-    // s.Fixture.Pool is populated by E2ESetupFixture.BeforeAll
+    // s.Setup.Pool and s.Cache.Client are populated by their respective BeforeAll hooks
 }
 ```
 
@@ -314,24 +315,28 @@ Fixture.AfterEach
 
 All four hooks are optional (only `BeforeAll` is required).
 
-Fixtures can nest — a root fixture's hooks run first, wrapping the child's:
+Fixtures form a DAG — each fixture can depend on multiple parents via pointer fields.
+Setup runs in topological order, teardown in reverse. Diamond dependencies are deduplicated (each fixture type is instantiated once):
 
 ```go
 type InfraFixture struct { Pool *pgxpool.Pool }
+type CacheFixture struct { Client *redis.Client }
 
 type APIFixture struct {
-    Infra     *InfraFixture
-    ServerURL string
+    Infra *InfraFixture
+    Cache *CacheFixture
 }
 ```
 
 ```
 InfraFixture.BeforeEach
+CacheFixture.BeforeEach
   APIFixture.BeforeEach
     Suite.BeforeEach
       TestCase
     Suite.AfterEach
   APIFixture.AfterEach
+CacheFixture.AfterEach
 InfraFixture.AfterEach
 ```
 
