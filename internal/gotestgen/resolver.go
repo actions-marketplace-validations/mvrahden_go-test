@@ -271,6 +271,7 @@ func (r *resolver) resolveFixture(named *types.Named) (*ResolvedFixture, error) 
 		rf.PkgName = named.Obj().Pkg().Name()
 		rf.QualifiedType = fixtureQualifiedType(named, rf.PkgName)
 		rf.PkgPath = typePkgPath
+		rf.Identifier = rf.PkgName + "_" + identifier
 	}
 
 	if !rf.BeforeAll {
