@@ -224,6 +224,13 @@ func executeTests(ctx context.Context, cfg ExecConfig, overlay *overlayResult) (
 	}
 
 	extraEnv := buildExtraEnv(cfg, setupProc)
+
+	totalSuites := 0
+	for _, suites := range overlay.suitesByPkg {
+		totalSuites += len(suites)
+	}
+	maxParallel := computeDispatchConcurrency(&pf.runFlags, cfg.Parallel, totalSuites)
+
 	targets := gotestrunner.BuildSuiteTargets(compiled, overlay.suitesByPkg, overlay.dirsByPkg, pf.runFlags, pf.userRunFilter)
 
 	if len(targets) == 0 {
@@ -245,9 +252,29 @@ func executeTests(ctx context.Context, cfg ExecConfig, overlay *overlayResult) (
 		mode = gotestrunner.RunStreamJSON
 	}
 	collector := gotestrunner.NewOutputCollector(mode, pf.verbose)
-	gotestrunner.RunSuites(ctx, targets, extraEnv, 0, collector)
+	gotestrunner.RunSuites(ctx, targets, extraEnv, maxParallel, collector)
 	collector.Finalize(overlay.noSuitePackages)
 	return collector.WorstExitCode(), nil
+}
+
+// computeDispatchConcurrency determines the semaphore size and injects
+// -parallel into runFlags based on --parallel. It returns the semaphore
+// size to use for inter-suite dispatch.
+//
+// When the user explicitly set -parallel but not --parallel, the old
+// behavior is preserved for backward compatibility.
+func computeDispatchConcurrency(runFlags *[]string, budget, totalSuites int) int {
+	userParallel := gotestrunner.ExtractParallelValue(*runFlags)
+
+	if userParallel > 0 && budget == 0 {
+		return 2 * runtime.GOMAXPROCS(0)
+	}
+
+	inter, intra := gotestrunner.ComputeConcurrency(budget, totalSuites, runtime.GOMAXPROCS(0))
+	if userParallel == 0 {
+		*runFlags = gotestrunner.InjectParallel(*runFlags, intra)
+	}
+	return inter
 }
 
 func executeTestsStreaming(ctx context.Context, cfg ExecConfig, overlay *overlayResult) (int, error) {
@@ -285,7 +312,11 @@ func executeTestsStreaming(ctx context.Context, cfg ExecConfig, overlay *overlay
 
 	compileCh := gotestrunner.CompilePackagesStream(streamCtx, overlay.suitePackages, overlay.overlayFlag, pf.buildFlags, overlay.tmpDir)
 
-	maxParallel := 2 * runtime.GOMAXPROCS(0)
+	totalSuites := 0
+	for _, suites := range overlay.suitesByPkg {
+		totalSuites += len(suites)
+	}
+	maxParallel := computeDispatchConcurrency(&pf.runFlags, cfg.Parallel, totalSuites)
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
 	anyTargets := false
@@ -432,7 +463,14 @@ func executeTestsCaptured(ctx context.Context, cfg ExecConfig, overlay *overlayR
 	}
 
 	extraEnv := buildExtraEnv(cfg, setupProc)
+
+	totalSuites := 0
+	for _, suites := range overlay.suitesByPkg {
+		totalSuites += len(suites)
+	}
 	runFlags := append(pf.runFlags, "-v")
+	maxParallel := computeDispatchConcurrency(&runFlags, cfg.Parallel, totalSuites)
+
 	targets := gotestrunner.BuildSuiteTargets(compiled, overlay.suitesByPkg, overlay.dirsByPkg, runFlags, pf.userRunFilter)
 
 	if len(targets) == 0 {
@@ -451,7 +489,7 @@ func executeTestsCaptured(ctx context.Context, cfg ExecConfig, overlay *overlayR
 	}
 
 	collector := gotestrunner.NewOutputCollector(gotestrunner.RunCaptureJSON, false)
-	gotestrunner.RunSuites(ctx, targets, extraEnv, 0, collector)
+	gotestrunner.RunSuites(ctx, targets, extraEnv, maxParallel, collector)
 	return collector.CapturedJSON(), collector.WorstExitCode(), nil
 }
 

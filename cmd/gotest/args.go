@@ -53,6 +53,7 @@ type ExecConfig struct {
 	CI              bool
 	JSON            bool
 	UpdateSnapshots bool
+	Parallel        int
 }
 
 // knownSubcommands is the set of recognized subcommands.
