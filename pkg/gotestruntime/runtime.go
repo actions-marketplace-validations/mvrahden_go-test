@@ -233,6 +233,28 @@ func setupDAG(ctx context.Context, fixtures []*FixtureNode, sharedState map[stri
 }
 
 func setupNodeDAG(ctx context.Context, node *FixtureNode, sharedState map[string]json.RawMessage, tracker *nodeTracker) error {
+	// Handle shared state nodes (unmarshal + hydrate)
+	if node.SharedState != nil {
+		if sharedState != nil {
+			raw, ok := sharedState[node.SharedState.StateKey]
+			if ok {
+				if err := json.Unmarshal(raw, node.SharedState.Target); err != nil {
+					return fmt.Errorf("unmarshal shared fixture %q: %w", node.SharedState.StateKey, err)
+				}
+			}
+		}
+		if node.Init != nil {
+			node.Init()
+		}
+		if node.SharedState.Hydrate != nil {
+			if err := node.SharedState.Hydrate(ctx); err != nil {
+				return fmt.Errorf("hydrate shared fixture %q: %w", node.SharedState.StateKey, err)
+			}
+		}
+		tracker.markSucceeded(node)
+		return nil
+	}
+
 	if len(node.SharedFixtures) > 0 {
 		for _, sf := range node.SharedFixtures {
 			raw, ok := sharedState[sf.StateKey]
@@ -296,6 +318,18 @@ func teardownDAG(fixtures []*FixtureNode, tracker *nodeTracker) bool {
 			}
 
 			if tracker.isSucceeded(node) {
+				if node.SharedState != nil {
+					if node.SharedState.Dehydrate != nil {
+						if err := node.SharedState.Dehydrate(context.Background()); err != nil {
+							fmt.Fprintf(os.Stderr, "%s: dehydrate failed: %v\n", node.Name, err)
+							mu.Lock()
+							failed[node.Name] = true
+							mu.Unlock()
+						}
+					}
+					return  // shared state nodes don't have AfterAll in test process
+				}
+
 				if node.AfterAll != nil {
 					ctx := context.Background()
 					if node.Config.Timeout > 0 {
@@ -552,7 +586,7 @@ func loadSharedState() (map[string]json.RawMessage, error) {
 
 func anyNodeHasSharedFixtures(roots, fixtures []*FixtureNode) bool {
 	for _, f := range fixtures {
-		if len(f.SharedFixtures) > 0 {
+		if len(f.SharedFixtures) > 0 || f.SharedState != nil {
 			return true
 		}
 	}

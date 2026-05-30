@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -1382,6 +1383,128 @@ func TestDAG_InvalidDependency(t *testing.T) {
 
 	exitCode := run(func() int { return 0 }, MainConfig{Fixtures: []*FixtureNode{node}})
 	gotest.Equal(t, 2, exitCode)
+}
+
+func TestDAG_SharedStateNode(t *testing.T) {
+	rec := &recorder{}
+
+	stateJSON := `{"ConnStr":"postgres://test"}`
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	os.WriteFile(stateFile, fmt.Appendf(nil, `{"pkg.PostgresSharedFixture":%s}`, stateJSON), 0644)
+	t.Setenv("GOTEST_SHARED_STATE_FILE", stateFile)
+
+	type pg struct{ ConnStr string }
+	pgTarget := &pg{}
+
+	pgNode := &FixtureNode{
+		Name: "PostgresSharedFixture",
+		SharedState: &SharedStateNode{
+			StateKey: "pkg.PostgresSharedFixture",
+			Target:   pgTarget,
+			Hydrate: func(ctx context.Context) error {
+				rec.record("pg.hydrate")
+				return nil
+			},
+			Dehydrate: func(ctx context.Context) error {
+				rec.record("pg.dehydrate")
+				return nil
+			},
+		},
+	}
+
+	apiNode := &FixtureNode{
+		Name:      "APIFixture",
+		Config:    gotest.DefaultFixtureConfig(),
+		DependsOn: []string{"PostgresSharedFixture"},
+		Init: func() {
+			rec.record("api.init")
+			gotest.Equal(t, "postgres://test", pgTarget.ConnStr)
+		},
+		BeforeAll: func(ctx context.Context) error {
+			rec.record("api.beforeAll")
+			return nil
+		},
+		AfterAll: func(ctx context.Context) error {
+			rec.record("api.afterAll")
+			return nil
+		},
+	}
+
+	exitCode := run(func() int {
+		rec.record("m.run")
+		return 0
+	}, MainConfig{Fixtures: []*FixtureNode{pgNode, apiNode}})
+
+	gotest.Equal(t, 0, exitCode)
+
+	events := rec.names()
+	hydrateIdx := indexOf(events, "pg.hydrate")
+	initIdx := indexOf(events, "api.init")
+	beforeAllIdx := indexOf(events, "api.beforeAll")
+	mRunIdx := indexOf(events, "m.run")
+	afterAllIdx := indexOf(events, "api.afterAll")
+	dehydrateIdx := indexOf(events, "pg.dehydrate")
+
+	gotest.True(t, hydrateIdx >= 0, "hydrate should be called")
+	gotest.True(t, hydrateIdx < initIdx, "hydrate before api.init")
+	gotest.True(t, initIdx < beforeAllIdx, "api.init before api.beforeAll")
+	gotest.True(t, beforeAllIdx < mRunIdx, "api.beforeAll before m.run")
+	gotest.True(t, mRunIdx < afterAllIdx, "m.run before api.afterAll")
+	gotest.True(t, afterAllIdx < dehydrateIdx, "api.afterAll before pg.dehydrate")
+}
+
+func TestDAG_SharedStateChain(t *testing.T) {
+	rec := &recorder{}
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	os.WriteFile(stateFile, []byte(`{
+		"pkg.Postgres": {"ConnStr":"postgres://test"},
+		"pkg.Schema":   {"Version":"v42"}
+	}`), 0644)
+	t.Setenv("GOTEST_SHARED_STATE_FILE", stateFile)
+
+	type pg struct{ ConnStr string }
+	type schema struct{ Version string }
+	pgTarget := &pg{}
+	schemaTarget := &schema{}
+
+	pgNode := &FixtureNode{
+		Name: "Postgres",
+		SharedState: &SharedStateNode{
+			StateKey: "pkg.Postgres",
+			Target:   pgTarget,
+			Hydrate: func(ctx context.Context) error {
+				rec.record("pg.hydrate")
+				return nil
+			},
+		},
+	}
+	schemaNode := &FixtureNode{
+		Name:      "Schema",
+		DependsOn: []string{"Postgres"},
+		SharedState: &SharedStateNode{
+			StateKey: "pkg.Schema",
+			Target:   schemaTarget,
+			Hydrate: func(ctx context.Context) error {
+				rec.record("schema.hydrate")
+				gotest.Equal(t, "postgres://test", pgTarget.ConnStr)
+				return nil
+			},
+		},
+		Init: func() { rec.record("schema.init") },
+	}
+
+	exitCode := run(func() int {
+		rec.record("m.run")
+		return 0
+	}, MainConfig{Fixtures: []*FixtureNode{pgNode, schemaNode}})
+
+	gotest.Equal(t, 0, exitCode)
+
+	events := rec.names()
+	gotest.True(t, indexOf(events, "pg.hydrate") < indexOf(events, "schema.init"))
+	gotest.True(t, indexOf(events, "schema.init") < indexOf(events, "schema.hydrate"))
+	gotest.True(t, indexOf(events, "schema.hydrate") < indexOf(events, "m.run"))
 }
 
 func indexOf(slice []string, val string) int {
