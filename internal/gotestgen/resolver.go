@@ -220,17 +220,18 @@ func (r *resolver) resolveFixture(named *types.Named) (*ResolvedFixture, error) 
 	r.resolving[named] = true
 	defer delete(r.resolving, named)
 
-	name := named.Obj().Name()
+	baseName := named.Obj().Name()
+	identifier := fixtureIdentifier(named)
 	typePkgPath := named.Obj().Pkg().Path()
 	isLocal := typePkgPath == r.targetPkg.PkgPath
 
 	st, ok := named.Underlying().(*types.Struct)
 	if !ok {
-		return nil, fmt.Errorf("%s: fixture must be a struct type", name)
+		return nil, fmt.Errorf("%s: fixture must be a struct type", identifier)
 	}
 
 	kind := gotestast.PackageFixture
-	if strings.HasSuffix(name, "SharedFixture") {
+	if strings.HasSuffix(baseName, "SharedFixture") {
 		kind = gotestast.SharedFixture
 	}
 
@@ -239,7 +240,7 @@ func (r *resolver) resolveFixture(named *types.Named) (*ResolvedFixture, error) 
 	var spec *gotestast.FixtureSpec
 	if isLocal {
 		for _, lf := range r.localFixtures {
-			if lf.Identifier() == name {
+			if lf.Identifier() == baseName {
 				spec = lf
 				break
 			}
@@ -251,7 +252,7 @@ func (r *resolver) resolveFixture(named *types.Named) (*ResolvedFixture, error) 
 
 	rf := &ResolvedFixture{
 		Kind:       kind,
-		Identifier: name,
+		Identifier: identifier,
 		Named:      named,
 		Pkg:          pkg,
 		Spec:         spec,
@@ -265,10 +266,10 @@ func (r *resolver) resolveFixture(named *types.Named) (*ResolvedFixture, error) 
 	}
 
 	if isLocal {
-		rf.QualifiedType = name
+		rf.QualifiedType = fixtureQualifiedType(named, "")
 	} else {
 		rf.PkgName = named.Obj().Pkg().Name()
-		rf.QualifiedType = rf.PkgName + "." + name
+		rf.QualifiedType = fixtureQualifiedType(named, rf.PkgName)
 		rf.PkgPath = typePkgPath
 	}
 
@@ -277,7 +278,7 @@ func (r *resolver) resolveFixture(named *types.Named) (*ResolvedFixture, error) 
 		if kind == gotestast.SharedFixture {
 			kindStr = "shared fixture"
 		}
-		return nil, fmt.Errorf("%s %q must have a BeforeAll(ctx context.Context) error method", kindStr, name)
+		return nil, fmt.Errorf("%s %q must have a BeforeAll(ctx context.Context) error method", kindStr, identifier)
 	}
 
 	if kind == gotestast.PackageFixture {
@@ -337,7 +338,7 @@ func isInternalPkgPath(pkgPath string) bool {
 }
 
 func (r *resolver) buildSharedFixtureRef(named *types.Named, idx int) (SharedFixtureRef, error) {
-	name := named.Obj().Name()
+	identifier := fixtureIdentifier(named)
 	typePkg := named.Obj().Pkg()
 	typePkgPath := typePkg.Path()
 
@@ -345,7 +346,7 @@ func (r *resolver) buildSharedFixtureRef(named *types.Named, idx int) (SharedFix
 		return SharedFixtureRef{}, fmt.Errorf(
 			"shared fixture %q is in an internal package (%s); "+
 				"shared fixtures must live in a non-internal package so the setup subprocess can import them",
-			name, typePkgPath,
+			identifier, typePkgPath,
 		)
 	}
 
@@ -355,19 +356,20 @@ func (r *resolver) buildSharedFixtureRef(named *types.Named, idx int) (SharedFix
 	hasHydrate := mset.Lookup(typePkg, "Hydrate") != nil
 	hasDehydrate := mset.Lookup(typePkg, "Dehydrate") != nil
 
-	qualifiedType := name
-	var pkgPath string
-	if !isLocal {
-		qualifiedType = typePkg.Name() + "." + name
+	var qualifiedType, pkgPath string
+	if isLocal {
+		qualifiedType = fixtureQualifiedType(named, "")
+	} else {
+		qualifiedType = fixtureQualifiedType(named, typePkg.Name())
 		pkgPath = typePkgPath
 	}
 
-	stateKey := typePkgPath + "." + name
+	stateKey := typePkgPath + "." + identifier
 
 	ref := SharedFixtureRef{
 		LocalVar:      fmt.Sprintf("sf%d", idx),
 		QualifiedType: qualifiedType,
-		FieldName:     name,
+		FieldName:     named.Obj().Name(),
 		StateKey:      stateKey,
 		HasHydrate:    hasHydrate,
 		HasDehydrate:  hasDehydrate,
@@ -383,8 +385,9 @@ func (r *resolver) buildSharedFixtureRef(named *types.Named, idx int) (SharedFix
 
 func (r *resolver) registerSharedFixture(named *types.Named) error {
 	typePkg := named.Obj().Pkg()
-	name := named.Obj().Name()
-	key := typePkg.Path() + "." + name
+	identifier := fixtureIdentifier(named)
+	baseName := named.Obj().Name()
+	key := typePkg.Path() + "." + identifier
 
 	if _, ok := r.sharedSeen[key]; ok {
 		return nil
@@ -398,7 +401,7 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 	st, ok := named.Underlying().(*types.Struct)
 	if !ok {
 		r.sharedSeen[key] = &SharedFixtureInfo{
-			Identifier:   name,
+			Identifier:   identifier,
 			PkgPath:      typePkg.Path(),
 			HasConfig:    hasConfig,
 			HasHydrate:   hasHydrate,
@@ -419,9 +422,9 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 	if hasHydrate {
 		pkg := r.findPackageForType(named)
 		if pkg != nil && len(pkg.Syntax) > 0 {
-			hydrateDecl := findHydrateDecl(pkg, name)
+			hydrateDecl := findHydrateDecl(pkg, baseName)
 			if hydrateDecl != nil {
-				localFields = gotestast.ClassifyLocalFieldsRaw(hydrateDecl, name, pkg.Syntax, pkg.TypesInfo)
+				localFields = gotestast.ClassifyLocalFieldsRaw(hydrateDecl, baseName, pkg.Syntax, pkg.TypesInfo)
 			}
 		}
 	}
@@ -439,7 +442,7 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 		for i := 0; i < st.NumFields(); i++ {
 			f := st.Field(i)
 			if f.Name() == fieldName {
-				if err := validateTransferFieldType(name, f); err != nil {
+				if err := validateTransferFieldType(identifier, f); err != nil {
 					return err
 				}
 				break
@@ -448,7 +451,7 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 	}
 
 	r.sharedSeen[key] = &SharedFixtureInfo{
-		Identifier:     name,
+		Identifier:     identifier,
 		PkgPath:        typePkg.Path(),
 		HasConfig:      hasConfig,
 		HasHydrate:     hasHydrate,
@@ -615,6 +618,48 @@ func detectConfigMethod(mset *types.MethodSet, typePkg *types.Package, kind gote
 		return mset.Lookup(typePkg, "SharedFixtureConfig") != nil
 	}
 	return false
+}
+
+func fixtureIdentifier(named *types.Named) string {
+	name := named.Obj().Name()
+	if targs := named.TypeArgs(); targs != nil && targs.Len() > 0 {
+		parts := make([]string, targs.Len())
+		for i := range targs.Len() {
+			arg := targs.At(i)
+			if n, ok := arg.(*types.Named); ok {
+				parts[i] = n.Obj().Name()
+			} else {
+				parts[i] = arg.String()
+			}
+		}
+		name += "_" + strings.Join(parts, "_")
+	}
+	return name
+}
+
+func fixtureQualifiedType(named *types.Named, pkgName string) string {
+	name := named.Obj().Name()
+	if targs := named.TypeArgs(); targs != nil && targs.Len() > 0 {
+		parts := make([]string, targs.Len())
+		for i := range targs.Len() {
+			arg := targs.At(i)
+			if n, ok := arg.(*types.Named); ok {
+				argPkg := n.Obj().Pkg()
+				if argPkg != nil && argPkg.Name() != pkgName {
+					parts[i] = argPkg.Name() + "." + n.Obj().Name()
+				} else {
+					parts[i] = n.Obj().Name()
+				}
+			} else {
+				parts[i] = arg.String()
+			}
+		}
+		name += "[" + strings.Join(parts, ", ") + "]"
+	}
+	if pkgName != "" {
+		return pkgName + "." + name
+	}
+	return name
 }
 
 func pointerNamed(field *types.Var) *types.Named {
