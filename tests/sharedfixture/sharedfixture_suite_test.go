@@ -1,6 +1,7 @@
 package sharedfixture_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -87,8 +88,26 @@ func (s *SharedFixtureIntegrationTestSuite) TestSharedFixtureIntegration(t *gote
 		gotest.NoError(w, err)
 		gotest.NoError(w, cmd.Start())
 
-		var state map[string]json.RawMessage
-		gotest.NoError(w, json.NewDecoder(stdout).Decode(&state))
+		type stateEntry struct {
+			Key            string          `json:"key"`
+			State          json.RawMessage `json:"state,omitempty"`
+			TeardownBudget string          `json:"teardownBudget,omitempty"`
+			Error          string          `json:"error,omitempty"`
+		}
+
+		state := map[string]json.RawMessage{}
+		var doneEntry stateEntry
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			var entry stateEntry
+			gotest.NoError(w, json.Unmarshal(scanner.Bytes(), &entry))
+			if entry.Key == "_done" {
+				doneEntry = entry
+				break
+			}
+			state[entry.Key] = entry.State
+		}
+		gotest.NoError(w, scanner.Err())
 
 		stateBytes, err := json.Marshal(state)
 		gotest.NoError(w, err)
@@ -102,7 +121,7 @@ func (s *SharedFixtureIntegrationTestSuite) TestSharedFixtureIntegration(t *gote
 		})
 
 		w.It("StateContent", func(it *gotest.T) {
-			gotest.Equal(it, 3, len(state), "expected entries for Alpha, Beta, and _teardownBudget")
+			gotest.Equal(it, 2, len(state), "expected entries for Alpha and Beta")
 
 			alphaKey := "github.com/mvrahden/go-test/tests/sharedfixture/fixtures.AlphaSharedFixture"
 			betaKey := "github.com/mvrahden/go-test/tests/sharedfixture/fixtures.BetaSharedFixture"
@@ -111,8 +130,9 @@ func (s *SharedFixtureIntegrationTestSuite) TestSharedFixtureIntegration(t *gote
 			gotest.True(it, hasAlpha, "state should contain AlphaSharedFixture")
 			_, hasBeta := state[betaKey]
 			gotest.True(it, hasBeta, "state should contain BetaSharedFixture")
-			_, hasBudget := state["_teardownBudget"]
-			gotest.True(it, hasBudget, "state should contain _teardownBudget")
+
+			gotest.Equal(it, "", doneEntry.Error, "done entry should have no error")
+			gotest.NotEqual(it, "", doneEntry.TeardownBudget, "done entry should have teardownBudget")
 
 			var alphaState struct{ DataPath string }
 			gotest.NoError(it, json.Unmarshal(state[alphaKey], &alphaState))
