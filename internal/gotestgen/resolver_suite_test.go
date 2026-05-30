@@ -504,3 +504,33 @@ func (s *ResolverTestSuite) TestGenericAlias(t *gotest.T) {
 		})
 	})
 }
+
+func (s *ResolverTestSuite) TestSharedFixtureDependencies(t *gotest.T) {
+	t.When("shared fixture depends on another shared fixture", func(w *gotest.T) {
+		w.It("resolves the dependency chain", func(it *gotest.T) {
+			pkg := gotestgen.ExportMustTestPkg(it.T(), "TestResolve_SharedFixture_DependsOnSharedFixture")
+			c := gotestgen.NewCollector()
+			result := c.CollectSuiteSpecs(pkg)
+			gotest.Equal(it, 0, len(result.Errs))
+
+			spec, err := c.ApplyTestSuiteSpecs(result)
+			gotest.NoError(it, err)
+
+			resolved, err := gotestgen.Resolve(pkg, spec.EffectiveTestSuites, result.Fixtures)
+			gotest.NoError(it, err)
+
+			gotest.Equal(it, 2, len(resolved.RequiredSharedFixtures))
+
+			// Find Schema and verify it has PG as a dependency
+			var schema *gotestgen.SharedFixtureInfo
+			for i := range resolved.RequiredSharedFixtures {
+				if resolved.RequiredSharedFixtures[i].Identifier == "SchemaSharedFixture" {
+					schema = &resolved.RequiredSharedFixtures[i]
+				}
+			}
+			gotest.True(it, schema != nil, "expected SchemaSharedFixture in required list")
+			gotest.Equal(it, 1, len(schema.Dependencies))
+			gotest.Contains(it, schema.Dependencies[0], "PGSharedFixture")
+		})
+	})
+}

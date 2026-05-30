@@ -20,6 +20,7 @@ type SharedFixtureInfo struct {
 	HasDehydrate   bool
 	TransferFields []string // exported fields that are serialized (all exported minus local)
 	LocalFields    []string // exported fields assigned in Hydrate
+	Dependencies   []string // state keys of shared fixtures this one depends on
 }
 
 type sharedSetupData struct {

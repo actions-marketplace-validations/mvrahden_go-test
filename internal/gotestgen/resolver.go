@@ -439,6 +439,37 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 		}
 	}
 
+	// Detect shared fixture pointer fields as dependencies.
+	var deps []string
+	depFields := make(map[string]bool)
+	for i := 0; i < st.NumFields(); i++ {
+		f := st.Field(i)
+		depNamed := pointerNamed(f)
+		if depNamed == nil {
+			continue
+		}
+		depName := depNamed.Obj().Name()
+		if strings.HasSuffix(depName, "SharedFixture") {
+			depKey := depNamed.Obj().Pkg().Path() + "." + fixtureIdentifier(depNamed)
+			deps = append(deps, depKey)
+			depFields[f.Name()] = true
+			if err := r.registerSharedFixture(depNamed); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Remove dependency fields from transfer (they are pointers and not JSON-serializable).
+	if len(depFields) > 0 {
+		filtered := transfer[:0]
+		for _, name := range transfer {
+			if !depFields[name] {
+				filtered = append(filtered, name)
+			}
+		}
+		transfer = filtered
+	}
+
 	for _, fieldName := range transfer {
 		for i := 0; i < st.NumFields(); i++ {
 			f := st.Field(i)
@@ -459,6 +490,7 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 		HasDehydrate:   hasDehydrate,
 		TransferFields: transfer,
 		LocalFields:    local,
+		Dependencies:   deps,
 	}
 	return nil
 }
