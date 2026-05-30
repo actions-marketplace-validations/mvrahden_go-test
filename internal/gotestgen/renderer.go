@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"go/format"
+	"strings"
 	"text/template"
 
 	"github.com/mvrahden/go-test/about"
@@ -55,9 +56,22 @@ type SharedFixtureRef struct {
 	QualifiedType string // e.g. "fixtures.PostgresSharedFixture"
 	FieldName     string // e.g. "PostgresSharedFixture"
 	StateKey      string // e.g. "github.com/example/fixtures.PostgresSharedFixture"
+	Identifier    string // e.g. "PostgresSharedFixture" (same pkg) or "fixtures_PostgresSharedFixture" (cross pkg)
 	HasHydrate    bool
 	HasDehydrate  bool
 	PkgPath       string // import path, empty if same package
+}
+
+// SharedFixtureNodeVM is the view model for rendering a shared fixture as a DAG node.
+type SharedFixtureNodeVM struct {
+	Identifier    string
+	QualifiedType string
+	StateKey      string
+	HasHydrate    bool
+	HasDehydrate  bool
+	PkgPath       string
+	DependsOn     []string
+	ParentFields  map[string]string // parent shared fixture identifier → field name
 }
 
 type headerImport struct {
@@ -85,8 +99,10 @@ func (r renderer) RenderTestSuiteSpec(pkg *packages.Package, spec SpecOutcome, r
 		return nil, fmt.Errorf("failed rendering file header. err: %w", err)
 	}
 
+	sfNodeVMs := buildSharedFixtureNodeVMs(resolved.RequiredSharedFixtures, pkg.PkgPath)
+
 	if len(fixtureBound) > 0 {
-		if err := r.renderFixtures(buf, fixtureBound, allViewModels, resolved.SuiteFixtureFields); err != nil {
+		if err := r.renderFixtures(buf, fixtureBound, allViewModels, resolved.SuiteFixtureFields, sfNodeVMs); err != nil {
 			return nil, fmt.Errorf("failed rendering fixture suites. err: %w", err)
 		}
 	}
@@ -131,7 +147,23 @@ func (r *renderer) renderFileHeader(buf *bytes.Buffer, pkg *packages.Package, sp
 		imports = append(imports, headerImport{Path: "context"})
 		imports = append(imports, headerImport{Path: "os"})
 	}
-	hasSharedFixtures := hasSuiteSharedFixtures
+	hasSharedFixtures := false
+	if hasSuiteSharedFixtures {
+		fixtureBoundSuites := make(map[string]bool)
+		for _, vm := range allViewModels {
+			for _, cs := range vm.ChildSuites {
+				fixtureBoundSuites[cs.Identifier()] = true
+			}
+		}
+		for _, ts := range spec.EffectiveTestSuites {
+			if _, hasSF := suiteSharedFixtures[ts.Identifier()]; hasSF {
+				if !fixtureBoundSuites[ts.Identifier()] {
+					hasSharedFixtures = true
+					break
+				}
+			}
+		}
+	}
 	seenPkg := map[string]bool{}
 	for _, vm := range allViewModels {
 		if vm.PkgPath != "" && !seenPkg[vm.PkgPath] {
@@ -177,7 +209,7 @@ func (r *renderer) renderTestSuites(buf *bytes.Buffer, spec SpecOutcome, suiteSh
 	})
 }
 
-func (r *renderer) renderFixtures(buf *bytes.Buffer, fixtureBound []*gotestast.TestSuiteSpec, allViewModels []*FixtureViewModel, suiteFixtureFields map[string][]FixtureFieldBinding) error {
+func (r *renderer) renderFixtures(buf *bytes.Buffer, fixtureBound []*gotestast.TestSuiteSpec, allViewModels []*FixtureViewModel, suiteFixtureFields map[string][]FixtureFieldBinding, sfNodes []*SharedFixtureNodeVM) error {
 	if len(allViewModels) == 0 {
 		return nil
 	}
@@ -186,6 +218,7 @@ func (r *renderer) renderFixtures(buf *bytes.Buffer, fixtureBound []*gotestast.T
 		"FixtureBoundSuites": fixtureBound,
 		"AllFixtures":        allViewModels,
 		"FlatSuites":         flattenSuitesDAG(allViewModels, suiteFixtureFields),
+		"SharedFixtureNodes": sfNodes,
 	})
 }
 
@@ -222,6 +255,10 @@ func resolvedToFlatViewModel(rf *ResolvedFixture) *FixtureViewModel {
 		vm.DependsOn = vm.ParentIdentifiers
 	}
 
+	for _, sf := range rf.SharedFixtures {
+		vm.DependsOn = append(vm.DependsOn, sf.Identifier)
+	}
+
 	return vm
 }
 
@@ -229,6 +266,65 @@ func buildAllFixtureViewModels(allFixtures []*ResolvedFixture) []*FixtureViewMod
 	var vms []*FixtureViewModel
 	for _, rf := range allFixtures {
 		vms = append(vms, resolvedToFlatViewModel(rf))
+	}
+	return vms
+}
+
+func buildSharedFixtureNodeVMs(sharedFixtures []SharedFixtureInfo, targetPkgPath string) []*SharedFixtureNodeVM {
+	if len(sharedFixtures) == 0 {
+		return nil
+	}
+
+	// Build a map from state key → identifier for dependency resolution.
+	stateKeyToID := make(map[string]string, len(sharedFixtures))
+	for _, sf := range sharedFixtures {
+		id := sf.Identifier
+		if sf.PkgPath != targetPkgPath {
+			parts := strings.Split(sf.PkgPath, "/")
+			pkgName := parts[len(parts)-1]
+			id = pkgName + "_" + sf.Identifier
+		}
+		stateKeyToID[sf.PkgPath+"."+sf.Identifier] = id
+	}
+
+	var vms []*SharedFixtureNodeVM
+	for _, sf := range sharedFixtures {
+		id := sf.Identifier
+		qualifiedType := sf.Identifier
+		if sf.PkgPath != targetPkgPath {
+			parts := strings.Split(sf.PkgPath, "/")
+			pkgName := parts[len(parts)-1]
+			id = pkgName + "_" + sf.Identifier
+			qualifiedType = pkgName + "." + sf.Identifier
+		}
+
+		var dependsOn []string
+		for _, depKey := range sf.Dependencies {
+			if depID, ok := stateKeyToID[depKey]; ok {
+				dependsOn = append(dependsOn, depID)
+			}
+		}
+
+		var parentFields map[string]string
+		if len(sf.DependencyFields) > 0 {
+			parentFields = make(map[string]string)
+			for depKey, fieldName := range sf.DependencyFields {
+				if parentID, ok := stateKeyToID[depKey]; ok {
+					parentFields[parentID] = fieldName
+				}
+			}
+		}
+
+		vms = append(vms, &SharedFixtureNodeVM{
+			Identifier:    id,
+			QualifiedType: qualifiedType,
+			StateKey:      sf.PkgPath + "." + sf.Identifier,
+			HasHydrate:    sf.HasHydrate,
+			HasDehydrate:  sf.HasDehydrate,
+			PkgPath:       sf.PkgPath,
+			DependsOn:     dependsOn,
+			ParentFields:  parentFields,
+		})
 	}
 	return vms
 }

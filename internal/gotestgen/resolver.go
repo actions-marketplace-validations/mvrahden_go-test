@@ -425,11 +425,17 @@ func (r *resolver) buildSharedFixtureRef(named *types.Named, idx int) (SharedFix
 
 	stateKey := typePkgPath + "." + identifier
 
+	sfIdentifier := identifier
+	if !isLocal {
+		sfIdentifier = typePkg.Name() + "_" + identifier
+	}
+
 	ref := SharedFixtureRef{
 		LocalVar:      fmt.Sprintf("sf%d", idx),
 		QualifiedType: qualifiedType,
 		FieldName:     named.Obj().Name(),
 		StateKey:      stateKey,
+		Identifier:    sfIdentifier,
 		HasHydrate:    hasHydrate,
 		HasDehydrate:  hasDehydrate,
 		PkgPath:       pkgPath,
@@ -500,6 +506,7 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 	// Detect shared fixture pointer fields as dependencies.
 	var deps []string
 	depFields := make(map[string]bool)
+	depFieldMap := make(map[string]string) // dep state key → field name
 	for i := 0; i < st.NumFields(); i++ {
 		f := st.Field(i)
 		depNamed := pointerNamed(f)
@@ -511,6 +518,7 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 			depKey := depNamed.Obj().Pkg().Path() + "." + fixtureIdentifier(depNamed)
 			deps = append(deps, depKey)
 			depFields[f.Name()] = true
+			depFieldMap[depKey] = f.Name()
 			if err := r.registerSharedFixture(depNamed); err != nil {
 				return err
 			}
@@ -541,14 +549,15 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 	}
 
 	r.sharedSeen[key] = &SharedFixtureInfo{
-		Identifier:     identifier,
-		PkgPath:        typePkg.Path(),
-		HasConfig:      hasConfig,
-		HasHydrate:     hasHydrate,
-		HasDehydrate:   hasDehydrate,
-		TransferFields: transfer,
-		LocalFields:    local,
-		Dependencies:   deps,
+		Identifier:       identifier,
+		PkgPath:          typePkg.Path(),
+		HasConfig:        hasConfig,
+		HasHydrate:       hasHydrate,
+		HasDehydrate:     hasDehydrate,
+		TransferFields:   transfer,
+		LocalFields:      local,
+		Dependencies:     deps,
+		DependencyFields: depFieldMap,
 	}
 	return nil
 }

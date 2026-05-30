@@ -13,14 +13,15 @@ var sharedFixtureTpl = template.Must(template.New("sharedfixture").ParseFS(templ
 
 // SharedFixtureInfo describes a shared fixture to be run in a setup subprocess.
 type SharedFixtureInfo struct {
-	Identifier     string // type name e.g. "PostgresFixture"
-	PkgPath        string // import path e.g. "github.com/example/project/tests/fixtures"
-	HasConfig      bool
-	HasHydrate     bool
-	HasDehydrate   bool
-	TransferFields []string // exported fields that are serialized (all exported minus local)
-	LocalFields    []string // exported fields assigned in Hydrate
-	Dependencies   []string // state keys of shared fixtures this one depends on
+	Identifier       string // type name e.g. "PostgresFixture"
+	PkgPath          string // import path e.g. "github.com/example/project/tests/fixtures"
+	HasConfig        bool
+	HasHydrate       bool
+	HasDehydrate     bool
+	TransferFields   []string          // exported fields that are serialized (all exported minus local)
+	LocalFields      []string          // exported fields assigned in Hydrate
+	Dependencies     []string          // state keys of shared fixtures this one depends on
+	DependencyFields map[string]string // dep state key → field name in this struct
 }
 
 type sharedSetupData struct {

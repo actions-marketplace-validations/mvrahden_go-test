@@ -16,12 +16,14 @@ func (ts *ƒƒ_GOTEST_{{ $ts.Identifier }}) AfterEach(it *gotest.T) { {{ if $ts.
 {{- end }}
 {{- end }}
 
-{{- /* Package-level fixture variables for all fixtures in the tree */ -}}
+{{- /* Shared fixture package-level vars */ -}}
+{{ range $sf := .SharedFixtureNodes }}
+var ƒ_sf_{{ $sf.Identifier }} = &{{ $sf.QualifiedType }}{}
+{{ end }}
+
+{{- /* Package fixture package-level vars */ -}}
 {{ range $f := .AllFixtures }}
 var ƒ_{{ $f.Identifier }} *{{ $f.QualifiedIdentifier }}
-{{- range $sf := $f.SharedFixtures }}
-var ƒ_{{ $sf.LocalVar }}_{{ $f.Identifier }} = &{{ $sf.QualifiedType }}{}
-{{- end }}
 {{ end }}
 
 func TestMain(m *testing.M) {
@@ -42,6 +44,35 @@ func TestMain(m *testing.M) {
 
     os.Exit(gotestruntime.RunFixtureMain(m, gotestruntime.MainConfig{
         Fixtures: []*gotestruntime.FixtureNode{
+{{- range $sf := .SharedFixtureNodes }}
+            {
+                Name: "{{ $sf.Identifier }}",
+                SharedState: &gotestruntime.SharedStateNode{
+                    StateKey: "{{ $sf.StateKey }}",
+                    Target: ƒ_sf_{{ $sf.Identifier }},
+{{- if $sf.HasHydrate }}
+                    Hydrate: func(ctx context.Context) error { return ƒ_sf_{{ $sf.Identifier }}.Hydrate(ctx) },
+{{- end }}
+{{- if $sf.HasDehydrate }}
+                    Dehydrate: func(ctx context.Context) error { return ƒ_sf_{{ $sf.Identifier }}.Dehydrate(ctx) },
+{{- end }}
+                },
+{{- if $sf.ParentFields }}
+                Init: func() {
+{{- range $parentID, $fieldName := $sf.ParentFields }}
+                    ƒ_sf_{{ $sf.Identifier }}.{{ $fieldName }} = ƒ_sf_{{ $parentID }}
+{{- end }}
+                },
+{{- end }}
+{{- if $sf.DependsOn }}
+                DependsOn: []string{
+{{- range $dep := $sf.DependsOn }}
+                    "{{ $dep }}",
+{{- end }}
+                },
+{{- end }}
+            },
+{{- end }}
 {{- range $f := .AllFixtures }}
 {{ template "fixtureNode" $f }}
 {{- end }}
@@ -143,10 +174,13 @@ func Test{{ $fs.Suite.Identifier }}(t *testing.T) {
                 Config: gotest.DefaultFixtureConfig(),
 {{- end }}
                 Init: func() {
-{{- if .ParentFields }}
+{{- if or .ParentFields .SharedFixtures }}
                     ƒ_{{ .Identifier }} = &{{ .QualifiedIdentifier }}{
 {{- range $parentID, $fieldName := .ParentFields }}
                         {{ $fieldName }}: ƒ_{{ $parentID }},
+{{- end }}
+{{- range $sf := .SharedFixtures }}
+                        {{ $sf.FieldName }}: ƒ_sf_{{ $sf.Identifier }},
 {{- end }}
                     }
 {{- else }}
@@ -159,23 +193,6 @@ func Test{{ $fs.Suite.Identifier }}(t *testing.T) {
 {{- if .AfterAll }}
                 AfterAll: func(ctx context.Context) error {
                     return ƒ_{{ .Identifier }}.AfterAll(ctx)
-                },
-{{- end }}
-{{- if .SharedFixtures }}
-                SharedFixtures: []gotestruntime.SharedFixtureBinding{
-{{- range $sf := .SharedFixtures }}
-                    {
-                        StateKey: "{{ $sf.StateKey }}",
-                        Target: ƒ_{{ $sf.LocalVar }}_{{ $.Identifier }},
-{{- if $sf.HasHydrate }}
-                        Hydrate: func(ctx context.Context) error { return ƒ_{{ $sf.LocalVar }}_{{ $.Identifier }}.Hydrate(ctx) },
-{{- end }}
-{{- if $sf.HasDehydrate }}
-                        Dehydrate: func(ctx context.Context) error { return ƒ_{{ $sf.LocalVar }}_{{ $.Identifier }}.Dehydrate(ctx) },
-{{- end }}
-                        Assign: func() { ƒ_{{ $.Identifier }}.{{ $sf.FieldName }} = ƒ_{{ $sf.LocalVar }}_{{ $.Identifier }} },
-                    },
-{{- end }}
                 },
 {{- end }}
 {{- if .DependsOn }}
