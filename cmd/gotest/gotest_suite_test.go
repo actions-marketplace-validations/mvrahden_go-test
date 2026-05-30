@@ -282,16 +282,7 @@ func (s *CmdGotestTestSuite) TestRunDiscover_SimpleSuite(t *gotest.T) {
 			it.T().Skipf("examples directory not found: %v", err)
 		}
 
-		origDir, err := os.Getwd()
-		if err != nil {
-			it.T().Fatal(err)
-		}
-		if err := os.Chdir(absExamples); err != nil {
-			it.T().Fatal(err)
-		}
-		defer os.Chdir(origDir)
-
-		loadResults, err := gotestgen.LoadPackages([]string{"./cart"}, nil)
+		loadResults, err := gotestgen.LoadPackages([]string{filepath.Join(absExamples, "cart")}, nil)
 		if err != nil {
 			it.T().Fatalf("LoadPackages: %v", err)
 		}
@@ -422,16 +413,7 @@ func (s *CmdGotestTestSuite) TestGenerateOverlay(t *gotest.T) {
 				it.T().Skipf("examples directory not found: %v", err)
 			}
 
-			origDir, err := os.Getwd()
-			if err != nil {
-				it.T().Fatal(err)
-			}
-			if err := os.Chdir(absExamples); err != nil {
-				it.T().Fatal(err)
-			}
-			defer os.Chdir(origDir)
-
-			loaded, err := gotestgen.LoadPackages([]string{"./cart"}, nil)
+			loaded, err := gotestgen.LoadPackages([]string{filepath.Join(absExamples, "cart")}, nil)
 			if err != nil {
 				it.T().Fatalf("LoadPackages: %v", err)
 			}
@@ -483,16 +465,7 @@ func (s *CmdGotestTestSuite) TestGenerateOverlay(t *gotest.T) {
 				it.T().Fatal(err)
 			}
 
-			origDir, err := os.Getwd()
-			if err != nil {
-				it.T().Fatal(err)
-			}
-			if err := os.Chdir(tmpDir); err != nil {
-				it.T().Fatal(err)
-			}
-			defer os.Chdir(origDir)
-
-			loaded, err := gotestgen.LoadPackages([]string{"."}, nil)
+			loaded, err := gotestgen.LoadPackages([]string{tmpDir}, nil)
 			if err != nil {
 				it.T().Fatalf("LoadPackages: %v", err)
 			}
