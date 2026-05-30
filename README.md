@@ -404,6 +404,33 @@ func (s *MyTestSuite) TestTwo(t *gotest.T, ctx *MethodParallelCtx) {
 
 The returning `BeforeEach` pattern ensures each parallel method operates on its own isolated state.
 
+### Concurrency control
+
+These two dimensions — suite processes and method goroutines — multiply.
+Left unchecked, that product grows quadratically with CPU count and saturates the machine.
+`gotest` manages this automatically with a linear concurrency budget.
+
+By default the budget is `2 × GOMAXPROCS`.
+The runner caps suite processes at `GOMAXPROCS` (one per core) and distributes the remaining budget as `-test.parallel` to each subprocess.
+On a 4-core machine with 10 suites this means 4 concurrent processes, each running 2 test methods at a time — 8 total, not 32.
+
+Override with `--parallel`:
+
+```bash
+gotest ./... --parallel 16          # total budget of 16
+gotest ./... --parallel 12 -parallel 4  # 4 per suite, 3 processes (12/4)
+gotest ./... -parallel 8            # explicit per-suite, no budget management
+```
+
+| Flags | Suite processes | Methods per suite | Total |
+|:------|:---------------:|:-----------------:|:-----:|
+| *(none)* | `min(S, GOMAXPROCS)` | `budget / inter` | `2 × GOMAXPROCS` |
+| `--parallel N` | `min(S, GOMAXPROCS, N)` | `N / inter` | `N` |
+| `-parallel M` | `2 × GOMAXPROCS` | `M` | `2 × GOMAXPROCS × M` *(compat)* |
+| `--parallel N -parallel M` | `min(S, GOMAXPROCS, N/M)` | `M` | `~N` |
+
+Where *S* is the number of suites and *inter* is the computed process count.
+
 ## Testing Toolkit
 
 ### Type-Safe Assertions
