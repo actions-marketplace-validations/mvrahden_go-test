@@ -59,6 +59,11 @@ func runWatch(inv Invocation) int {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
 	}
+	parallel, err := parseParallelFlag(ownArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
 	patterns := ExtractPackagePatterns(goTestArgs)
 
 	cfg := ExecConfig{
@@ -68,6 +73,7 @@ func runWatch(inv Invocation) int {
 		Debug:           slices.Contains(ownArgs, "--debug"),
 		CI:              slices.Contains(ownArgs, "--ci"),
 		UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
+		Parallel:        parallel,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals...)

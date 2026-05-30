@@ -101,6 +101,11 @@ func runTest(inv Invocation) int {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
 	}
+	parallel, err := parseParallelFlag(ownArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
 
 	var coverProfile string
 	if minCoverage > 0 {
@@ -131,6 +136,7 @@ func runTest(inv Invocation) int {
 		CI:              slices.Contains(ownArgs, "--ci"),
 		JSON:            jsonMode,
 		UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
+		Parallel:        parallel,
 	}
 
 	code := Run(cfg)
@@ -192,6 +198,21 @@ func parseSetupTimeoutFlag(args []string) (time.Duration, error) {
 		return d, nil
 	}
 	return 0, nil
+}
+
+func parseParallelFlag(args []string) (int, error) {
+	raw := extractStringFlag(args, "--parallel", "")
+	if raw == "" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --parallel value %q: must be a positive integer", raw)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("invalid --parallel value %d: must be positive", v)
+	}
+	return v, nil
 }
 
 func readCoverageTotal(profilePath string) (float64, error) {
