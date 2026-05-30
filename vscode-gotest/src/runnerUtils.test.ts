@@ -1069,59 +1069,44 @@ describe("resolveAncestorsOf", () => {
 });
 
 describe("resolveRunPatterns", () => {
-  it("returns ./... from module dir when all packages are in the same module", () => {
+  it("uses workspace patterns when prefix equals module path", () => {
+    const result = resolveRunPatterns(
+      [
+        "example.com/proj/pkg/a",
+        "example.com/proj/pkg/b",
+        "example.com/proj/examples/auth",
+      ],
+      "example.com/proj",
+      ["./...", "./examples/..."],
+    );
+    expect(result).toEqual(["./...", "./examples/..."]);
+  });
+
+  it("falls back to computeWildcard when prefix is deeper than module", () => {
     const result = resolveRunPatterns(
       ["example.com/proj/pkg/a", "example.com/proj/pkg/b"],
       "example.com/proj",
-      "/ws",
-      "/ws",
+      ["./...", "./examples/..."],
     );
-    expect(result.patterns).toEqual(["./..."]);
-    expect(result.cwd).toBe("/ws");
+    expect(result).toEqual(["example.com/proj/pkg/..."]);
   });
 
-  it("uses module dir as cwd when it differs from workspace dir", () => {
-    const result = resolveRunPatterns(
-      ["example.com/proj/examples/auth", "example.com/proj/examples/cart"],
-      "example.com/proj/examples",
-      "/ws/examples",
-      "/ws",
-    );
-    expect(result.patterns).toEqual(["./..."]);
-    expect(result.cwd).toBe("/ws/examples");
-  });
-
-  it("falls back to computeWildcard when no module info", () => {
+  it("falls back to computeWildcard when no workspace patterns", () => {
     const result = resolveRunPatterns(
       ["example.com/pkg/a", "example.com/pkg/b"],
+      "example.com",
       undefined,
-      undefined,
-      "/ws",
     );
-    expect(result.patterns).toEqual(["example.com/pkg/..."]);
-    expect(result.cwd).toBe("/ws");
+    expect(result).toEqual(["example.com/pkg/..."]);
   });
 
-  it("falls back to individual paths for single package", () => {
-    const result = resolveRunPatterns(
-      ["example.com/proj/pkg/a"],
-      "example.com/proj",
-      "/ws",
-      "/ws",
-    );
-    expect(result.patterns).toEqual(["example.com/proj/pkg/a"]);
-    expect(result.cwd).toBe("/ws");
+  it("returns undefined for single package", () => {
+    expect(
+      resolveRunPatterns(["example.com/proj/pkg/a"], "example.com/proj"),
+    ).toBeUndefined();
   });
 
-  it("falls back when packages span multiple modules", () => {
-    const result = resolveRunPatterns(
-      ["example.com/proj/pkg/a", "example.com/other/pkg/b"],
-      "example.com/proj",
-      "/ws",
-      "/ws",
-    );
-    // Not all packages match the module, so falls back
-    expect(result.cwd).toBe("/ws");
-    expect(result.patterns).not.toEqual(["./..."]);
+  it("returns undefined for empty array", () => {
+    expect(resolveRunPatterns([], "example.com/proj")).toBeUndefined();
   });
 });

@@ -354,23 +354,17 @@ export class CoverageRunner implements vscode.Disposable {
         });
       }
 
-      const byModule = new Map<
-        string,
-        { wsDir: string; moduleDir?: string; pkgs: PkgInfo[] }
-      >();
+      const byWorkspace = new Map<string, PkgInfo[]>();
       for (const info of validPkgs) {
-        const mp = this.cache.getModulePath(info.importPath);
-        const md = mp ? this.cache.getModuleDir(mp) : undefined;
-        const key = md ?? info.workspaceDir;
-        let group = byModule.get(key);
-        if (!group) {
-          group = { wsDir: info.workspaceDir, moduleDir: md, pkgs: [] };
-          byModule.set(key, group);
+        let list = byWorkspace.get(info.workspaceDir);
+        if (!list) {
+          list = [];
+          byWorkspace.set(info.workspaceDir, list);
         }
-        group.pkgs.push(info);
+        list.push(info);
       }
 
-      for (const [, { wsDir: workspaceDir, pkgs: pkgInfos }] of byModule) {
+      for (const [workspaceDir, pkgInfos] of byWorkspace) {
         if (effectiveToken.isCancellationRequested) {
           for (const info of pkgInfos) {
             for (const item of info.items) {
@@ -485,14 +479,6 @@ export class CoverageRunner implements vscode.Disposable {
     token: vscode.CancellationToken,
     testOnly?: boolean,
   ): Promise<string> {
-    const firstPkg = pkgInfos[0];
-    const modulePath = firstPkg
-      ? this.cache.getModulePath(firstPkg.importPath)
-      : undefined;
-    const moduleDir = modulePath
-      ? this.cache.getModuleDir(modulePath)
-      : undefined;
-
     const result = await executeBatch({
       pkgInfos,
       filter,
@@ -503,7 +489,6 @@ export class CoverageRunner implements vscode.Disposable {
       controller: this.controller,
       outputChannel: this.outputChannel,
       label: "coverage",
-      moduleDir,
       coverage: { store: this.store, testOnly },
       onResults: (applied) => {
         for (const r of applied) {

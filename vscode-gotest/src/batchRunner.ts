@@ -10,6 +10,7 @@ import {
   applyResults,
   spawnTestProcess,
   resolveRunPatterns,
+  readWorkspacePatterns,
   type AppliedResult,
 } from "./runnerUtils.js";
 import {
@@ -33,7 +34,6 @@ export interface BatchConfig {
   outputChannel: vscode.LogOutputChannel;
   label: string;
   env?: Record<string, string>;
-  moduleDir?: string;
   coverage?: {
     store: CoverageStore;
     testOnly?: boolean;
@@ -57,26 +57,23 @@ export async function executeBatch(config: BatchConfig): Promise<BatchResult> {
     outputChannel,
     label,
     env,
-    moduleDir,
     coverage,
     onResults,
   } = config;
 
   const importPaths = pkgInfos.map((p) => p.importPath);
-  const modulePath = await readModulePath(moduleDir ?? workspaceDir);
   let cliPkgArgs: string[];
-  let effectiveCwd = workspaceDir;
   if (filter) {
     cliPkgArgs = importPaths;
   } else {
-    const resolved = resolveRunPatterns(
+    const modulePath = await readModulePath(workspaceDir);
+    const wsPatterns = await readWorkspacePatterns(workspaceDir);
+    const wildcards = resolveRunPatterns(
       importPaths,
       modulePath,
-      moduleDir,
-      workspaceDir,
+      wsPatterns,
     );
-    cliPkgArgs = resolved.patterns;
-    effectiveCwd = resolved.cwd;
+    cliPkgArgs = wildcards ?? importPaths;
   }
   let coverFile: string | undefined;
 
@@ -106,7 +103,7 @@ export async function executeBatch(config: BatchConfig): Promise<BatchResult> {
     }
 
     const cliArgs = [...gotestArgs, "--", ...goTestArgs];
-    const cmd = await buildCliCommand(cliArgs, effectiveCwd, outputChannel);
+    const cmd = await buildCliCommand(cliArgs, workspaceDir, outputChannel);
     outputChannel.info(`[${label}] ${formatCliCommand(cmd)}`);
 
     const streamedPkgs = new Set<string>();
@@ -154,7 +151,7 @@ export async function executeBatch(config: BatchConfig): Promise<BatchResult> {
     const result = await spawnTestProcess(
       cmd.bin,
       cmd.args,
-      effectiveCwd,
+      workspaceDir,
       token,
       outputChannel,
       label,
