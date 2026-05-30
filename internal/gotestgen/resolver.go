@@ -51,13 +51,14 @@ type FixtureFieldBinding struct {
 
 // ResolveResult is the output of fixture resolution for a target package.
 type ResolveResult struct {
-	RootFixtures           []*ResolvedFixture
-	AllFixtures            []*ResolvedFixture // topologically sorted, all fixtures
-	RequiredSharedFixtures []SharedFixtureInfo // deduplicated, for setup subprocess
-	FixtureBound           []*gotestast.TestSuiteSpec
-	Standalone             []*gotestast.TestSuiteSpec
-	SuiteSharedFixtures    map[string][]SharedFixtureRef // suite identifier → direct shared fixture refs
-	SuiteFixtureFields     map[string][]FixtureFieldBinding // suite identifier → fixture→field bindings
+	RootFixtures                   []*ResolvedFixture
+	AllFixtures                    []*ResolvedFixture       // topologically sorted, all fixtures
+	RequiredSharedFixtures         []SharedFixtureInfo      // deduplicated, for setup subprocess
+	FixtureBound                   []*gotestast.TestSuiteSpec
+	Standalone                     []*gotestast.TestSuiteSpec
+	SuiteSharedFixtures            map[string][]SharedFixtureRef    // suite identifier → direct shared fixture refs
+	SuiteFixtureFields             map[string][]FixtureFieldBinding // suite identifier → fixture→field bindings
+	SuiteRequiredSharedFixtureKeys map[string][]string              // suite identifier → all required state keys (transitive)
 }
 
 type resolver struct {
@@ -142,6 +143,63 @@ func Resolve(targetPkg *packages.Package, suites []*gotestast.TestSuiteSpec, loc
 	// Collect deduplicated shared fixtures
 	for _, sf := range r.sharedSeen {
 		result.RequiredSharedFixtures = append(result.RequiredSharedFixtures, *sf)
+	}
+
+	// Compute per-suite transitive shared fixture keys
+	suiteKeys := make(map[string][]string)
+	sfInfoByKey := make(map[string]*SharedFixtureInfo)
+	for i := range result.RequiredSharedFixtures {
+		sf := &result.RequiredSharedFixtures[i]
+		sfInfoByKey[sf.PkgPath+"."+sf.Identifier] = sf
+	}
+
+	var collectTransitive func(key string, seen map[string]bool)
+	collectTransitive = func(key string, seen map[string]bool) {
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		if info, ok := sfInfoByKey[key]; ok {
+			for _, dep := range info.Dependencies {
+				collectTransitive(dep, seen)
+			}
+		}
+	}
+
+	for _, suite := range suites {
+		id := suite.Identifier()
+		seen := make(map[string]bool)
+
+		// From direct suite shared fixture refs
+		if refs, ok := result.SuiteSharedFixtures[id]; ok {
+			for _, ref := range refs {
+				collectTransitive(ref.StateKey, seen)
+			}
+		}
+
+		// From fixture tree shared fixtures
+		if bindings, ok := result.SuiteFixtureFields[id]; ok {
+			for _, b := range bindings {
+				for _, rf := range result.AllFixtures {
+					if rf.Identifier == b.FixtureIdentifier {
+						for _, sf := range rf.SharedFixtures {
+							collectTransitive(sf.StateKey, seen)
+						}
+					}
+				}
+			}
+		}
+
+		if len(seen) > 0 {
+			var keys []string
+			for k := range seen {
+				keys = append(keys, k)
+			}
+			suiteKeys[id] = keys
+		}
+	}
+	if len(suiteKeys) > 0 {
+		result.SuiteRequiredSharedFixtureKeys = suiteKeys
 	}
 
 	return result, nil

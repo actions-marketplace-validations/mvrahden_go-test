@@ -12,12 +12,13 @@ import (
 
 type GenerateResults []*GenerateResult
 type GenerateResult struct {
-	AbsPath          string   // absolute directory path of the package
-	PkgPath          string   // import path (e.g. "github.com/foo/bar")
-	PTest            []byte   // generated internal test source
-	PXTest           []byte   // generated external test source
-	SuiteNames       []string // suite struct identifiers (e.g. "FooTestSuite")
-	FixtureDepSuites []string // test function names that depend on shared fixtures (e.g. "TestFooSuite")
+	AbsPath                        string              // absolute directory path of the package
+	PkgPath                        string              // import path (e.g. "github.com/foo/bar")
+	PTest                          []byte              // generated internal test source
+	PXTest                         []byte              // generated external test source
+	SuiteNames                     []string            // suite struct identifiers (e.g. "FooTestSuite")
+	FixtureDepSuites               []string            // test function names that depend on shared fixtures (e.g. "TestFooSuite")
+	SuiteRequiredSharedFixtureKeys map[string][]string // test func name → required state keys
 }
 
 const (

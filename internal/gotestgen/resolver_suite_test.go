@@ -533,4 +533,27 @@ func (s *ResolverTestSuite) TestSharedFixtureDependencies(t *gotest.T) {
 			gotest.Contains(it, schema.Dependencies[0], "PGSharedFixture")
 		})
 	})
+
+	t.When("suite has transitive shared fixture dependencies", func(w *gotest.T) {
+		w.It("computes full required set including transitive deps", func(it *gotest.T) {
+			pkg := gotestgen.ExportMustTestPkg(it.T(), "TestResolve_SharedFixture_TransitiveDeps")
+			c := gotestgen.NewCollector()
+			result := c.CollectSuiteSpecs(pkg)
+			gotest.Equal(it, 0, len(result.Errs))
+
+			spec, err := c.ApplyTestSuiteSpecs(result)
+			gotest.NoError(it, err)
+
+			resolved, err := gotestgen.Resolve(pkg, spec.EffectiveTestSuites, result.Fixtures)
+			gotest.NoError(it, err)
+
+			// UserTestSuite references Schema which depends on PG → needs both
+			userKeys := resolved.SuiteRequiredSharedFixtureKeys["UserTestSuite"]
+			gotest.Equal(it, 2, len(userKeys), "UserTestSuite needs PG + Schema")
+
+			// SimpleTestSuite references only PG → needs only PG
+			simpleKeys := resolved.SuiteRequiredSharedFixtureKeys["SimpleTestSuite"]
+			gotest.Equal(it, 1, len(simpleKeys), "SimpleTestSuite needs only PG")
+		})
+	})
 }
