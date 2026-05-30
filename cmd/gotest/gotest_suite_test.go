@@ -675,8 +675,8 @@ func (s *CmdGotestTestSuite) TestAssignCoverProfiles(t *gotest.T) {
 				{Package: "pkg/b", SuiteName: "TestB"},
 			}
 			ExportAssignCoverProfiles(targets, "/tmp/cover")
-			gotest.Equal(it, "/tmp/cover/0.out", targets[0].CoverProfile)
-			gotest.Equal(it, "/tmp/cover/1.out", targets[1].CoverProfile)
+			gotest.Equal(it, filepath.Join("/tmp/cover", "0.out"), targets[0].CoverProfile)
+			gotest.Equal(it, filepath.Join("/tmp/cover", "1.out"), targets[1].CoverProfile)
 		})
 	})
 }
