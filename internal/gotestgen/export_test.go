@@ -117,22 +117,6 @@ func loadAllTestPkgs() (map[string]*packages.Package, string, error) {
 	return index, dir, nil
 }
 
-// mustTestPkg looks up a test package by t.Name() — used by remaining ptest files.
-func mustTestPkg(t *testing.T) *packages.Package {
-	t.Helper()
-	if testPkgErr != nil {
-		t.Fatal(testPkgErr)
-	}
-	pkg, ok := testPkgIndex[t.Name()]
-	if !ok {
-		t.Fatalf("no test package found for %s", t.Name())
-	}
-	if len(pkg.Errors) > 0 {
-		t.Fatalf("package errors: %v", pkg.Errors)
-	}
-	return pkg
-}
-
 // ExportMustTestPkg looks up a test package by explicit name — used by pxtest suites.
 func ExportMustTestPkg(t testing.TB, name string) *packages.Package {
 	t.Helper()
