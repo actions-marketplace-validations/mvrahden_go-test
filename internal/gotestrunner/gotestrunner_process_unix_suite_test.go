@@ -48,10 +48,8 @@ func (s *GotestrunnerProcessTestSuite) TestProcessGroupSetup(t *gotest.T) {
 			}
 			cmd := gotestrunner.ExportBuildSuiteCmd(ctx, target, env, tc.test2json)
 
-			gotest.True(sub, cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid,
-				"expected Setpgid to be true")
-			gotest.True(sub, cmd.Cancel != nil, "expected Cancel to be set")
-			gotest.Equal(sub, time.Duration(0), cmd.WaitDelay)
+			gotest.True(sub, cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setpgid,
+				"buildSuiteCmd should not set process group — NewManagedProcess handles it")
 		}
 	})
 }
