@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mvrahden/go-test/internal/protocol"
 	"github.com/mvrahden/go-test/pkg/gotestruntime/coverage"
 )
 
@@ -18,7 +19,7 @@ func run(runTests func() int, cfg MainConfig) int {
 
 	var sharedState map[string]json.RawMessage
 	if anyNodeHasSharedFixtures(cfg.Roots, cfg.Fixtures) {
-		if os.Getenv("GOTEST_SHARED_STATE_FILE") != "" {
+		if os.Getenv(protocol.EnvSharedStateFile) != "" {
 			var err error
 			sharedState, err = loadSharedState()
 			if err != nil {
@@ -27,7 +28,7 @@ func run(runTests func() int, cfg MainConfig) int {
 				return 2
 			}
 		} else if anyNodeHasLegacySharedFixtures(cfg.Roots, cfg.Fixtures) {
-			fmt.Fprintf(os.Stderr, "FAIL: GOTEST_SHARED_STATE_FILE not set — run via gotest CLI\n")
+			fmt.Fprintf(os.Stderr, "FAIL: %s not set — run via gotest CLI\n", protocol.EnvSharedStateFile)
 			restoreCoverage()
 			return 2
 		}
@@ -490,7 +491,7 @@ func teardownNode(node *FixtureNode, tracker *nodeTracker) bool {
 }
 
 func writeBudgetFile(cfg MainConfig) {
-	path := os.Getenv("GOTEST_TEARDOWN_BUDGET_FILE")
+	path := os.Getenv(protocol.EnvTeardownBudgetFile)
 	if path == "" {
 		return
 	}
@@ -576,9 +577,9 @@ func nodeTreePath(node *FixtureNode) time.Duration {
 }
 
 func loadSharedState() (map[string]json.RawMessage, error) {
-	path := os.Getenv("GOTEST_SHARED_STATE_FILE")
+	path := os.Getenv(protocol.EnvSharedStateFile)
 	if path == "" {
-		return nil, fmt.Errorf("GOTEST_SHARED_STATE_FILE not set — run via gotest CLI")
+		return nil, fmt.Errorf("%s not set — run via gotest CLI", protocol.EnvSharedStateFile)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

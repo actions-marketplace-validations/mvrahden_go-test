@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mvrahden/go-test/internal/gotestrunner"
+	"github.com/mvrahden/go-test/internal/protocol"
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
 
@@ -127,26 +128,24 @@ func (s *GotestrunnerProcessTestSuite) TestTeardownBudget(t *gotest.T) {
 		w.When("BudgetFile is set", func(w *gotest.T) {
 			w.It("sets GOTEST_TEARDOWN_BUDGET_FILE in env", func(it *gotest.T) {
 				target := gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFoo"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFoo",
 					BudgetFile: "/tmp/pkg.test.budget",
 				}
 				cmd := gotestrunner.ExportBuildSuiteCmd(ctx, target, env, false)
-				gotest.Contains(it, cmd.Env, "GOTEST_TEARDOWN_BUDGET_FILE=/tmp/pkg.test.budget", "GOTEST_TEARDOWN_BUDGET_FILE not found in cmd.Env")
+				gotest.Contains(it, cmd.Env, protocol.EnvTeardownBudgetFile+"=/tmp/pkg.test.budget", "GOTEST_TEARDOWN_BUDGET_FILE not found in cmd.Env")
 			})
 		})
 
 		w.When("BudgetFile is empty", func(w *gotest.T) {
 			w.It("does not set GOTEST_TEARDOWN_BUDGET_FILE", func(it *gotest.T) {
 				target := gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFoo"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFoo",
 				}
 				cmd := gotestrunner.ExportBuildSuiteCmd(ctx, target, env, false)
 				for _, e := range cmd.Env {
-					gotest.False(it, strings.HasPrefix(e, "GOTEST_TEARDOWN_BUDGET_FILE="),
+					gotest.False(it, strings.HasPrefix(e, protocol.EnvTeardownBudgetFile+"="),
 						"unexpected GOTEST_TEARDOWN_BUDGET_FILE in env: %s", e)
 				}
 			})

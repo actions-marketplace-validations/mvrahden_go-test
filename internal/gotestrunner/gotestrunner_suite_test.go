@@ -16,6 +16,7 @@ import (
 	"github.com/mvrahden/go-test/about"
 	"github.com/mvrahden/go-test/internal/gotestgen"
 	"github.com/mvrahden/go-test/internal/gotestrunner"
+	"github.com/mvrahden/go-test/internal/protocol"
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
 
@@ -353,9 +354,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "basic suite",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFooSuite",
 				},
 				wantBinary: "/tmp/pkg.test",
 				wantArgs:   []string{"/tmp/pkg.test", "-test.run=^TestFooSuite$"},
@@ -363,10 +363,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "run filter overrides suite name",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite", RunFilter: "^TestFooSuite$/^TestBar$"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFooSuite",
-					RunFilter:  "^TestFooSuite$/^TestBar$",
 				},
 				wantBinary: "/tmp/pkg.test",
 				wantArgs:   []string{"/tmp/pkg.test", "-test.run=^TestFooSuite$/^TestBar$"},
@@ -374,9 +372,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "with run flags",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFooSuite",
 					RunFlags:   []string{"-test.timeout=30s", "-test.count=1"},
 				},
 				wantBinary: "/tmp/pkg.test",
@@ -385,9 +382,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "keeps -test.v in run flags",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFooSuite",
 					RunFlags:   []string{"-test.v", "-test.timeout=10s"},
 				},
 				wantBinary: "/tmp/pkg.test",
@@ -396,9 +392,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "with cover profile",
 				target: gotestrunner.SuiteTarget{
-					Package:      "example.com/pkg",
+					SuiteSpec:    gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite"},
 					BinaryPath:   "/tmp/pkg.test",
-					SuiteName:    "TestFooSuite",
 					CoverProfile: "/tmp/cover.out",
 				},
 				wantBinary: "/tmp/pkg.test",
@@ -407,9 +402,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "suite name with regex-special chars",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFoo.Bar+Baz"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFoo.Bar+Baz",
 				},
 				wantBinary: "/tmp/pkg.test",
 				wantArgs:   []string{"/tmp/pkg.test", "-test.run=^TestFoo\\.Bar\\+Baz$"},
@@ -417,10 +411,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "all fields populated",
 				target: gotestrunner.SuiteTarget{
-					Package:      "example.com/pkg",
+					SuiteSpec:    gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite", RunFilter: "^TestFooSuite$/^TestBar$"},
 					BinaryPath:   "/tmp/pkg.test",
-					SuiteName:    "TestFooSuite",
-					RunFilter:    "^TestFooSuite$/^TestBar$",
 					RunFlags:     []string{"-test.timeout=30s", "-test.v"},
 					CoverProfile: "/tmp/cover.out",
 				},
@@ -443,11 +435,11 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 
 		w.It("matches original buildPlainArgs", func(it *gotest.T) {
 			targets := []gotestrunner.SuiteTarget{
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX"},
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX", RunFilter: "^TestX$/^Sub$"},
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX", RunFlags: []string{"-test.v", "-test.timeout=5s"}},
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX", CoverProfile: "/c.out"},
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX", RunFilter: "^TestX$/^Sub$", RunFlags: []string{"-test.count=2"}, CoverProfile: "/c.out"},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX"}, BinaryPath: "/bin/t"},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX", RunFilter: "^TestX$/^Sub$"}, BinaryPath: "/bin/t"},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX"}, BinaryPath: "/bin/t", RunFlags: []string{"-test.v", "-test.timeout=5s"}},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX"}, BinaryPath: "/bin/t", CoverProfile: "/c.out"},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX", RunFilter: "^TestX$/^Sub$"}, BinaryPath: "/bin/t", RunFlags: []string{"-test.count=2"}, CoverProfile: "/c.out"},
 			}
 			refCtx := context.Background()
 			refEnv := []string{"A=1"}
@@ -479,9 +471,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "basic suite",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFooSuite",
 				},
 				wantBinary: "go",
 				wantArgs: []string{"go", "tool", "test2json", "-p", "example.com/pkg", "-t", "/tmp/pkg.test",
@@ -490,10 +481,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "run filter overrides suite name",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite", RunFilter: "^TestFooSuite$/^TestBar$"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFooSuite",
-					RunFilter:  "^TestFooSuite$/^TestBar$",
 				},
 				wantBinary: "go",
 				wantArgs: []string{"go", "tool", "test2json", "-p", "example.com/pkg", "-t", "/tmp/pkg.test",
@@ -502,9 +491,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "strips -test.v from run flags",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFooSuite",
 					RunFlags:   []string{"-test.v", "-test.timeout=30s"},
 				},
 				wantBinary: "go",
@@ -514,9 +502,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "strips -test.v=true from run flags",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFooSuite",
 					RunFlags:   []string{"-test.v=true"},
 				},
 				wantBinary: "go",
@@ -526,9 +513,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "with cover profile",
 				target: gotestrunner.SuiteTarget{
-					Package:      "example.com/pkg",
+					SuiteSpec:    gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite"},
 					BinaryPath:   "/tmp/pkg.test",
-					SuiteName:    "TestFooSuite",
 					CoverProfile: "/tmp/cover.out",
 				},
 				wantBinary: "go",
@@ -538,10 +524,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "all fields, -test.v stripped",
 				target: gotestrunner.SuiteTarget{
-					Package:      "example.com/pkg",
+					SuiteSpec:    gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFooSuite", RunFilter: "^TestFooSuite$/^TestBar$"},
 					BinaryPath:   "/tmp/pkg.test",
-					SuiteName:    "TestFooSuite",
-					RunFilter:    "^TestFooSuite$/^TestBar$",
 					RunFlags:     []string{"-test.v", "-test.timeout=30s", "-test.count=1"},
 					CoverProfile: "/tmp/cover.out",
 				},
@@ -554,9 +538,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 			{
 				Name: "suite name with regex-special chars",
 				target: gotestrunner.SuiteTarget{
-					Package:    "example.com/pkg",
+					SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFoo.Bar+Baz"},
 					BinaryPath: "/tmp/pkg.test",
-					SuiteName:  "TestFoo.Bar+Baz",
 				},
 				wantBinary: "go",
 				wantArgs: []string{"go", "tool", "test2json", "-p", "example.com/pkg", "-t", "/tmp/pkg.test",
@@ -587,12 +570,12 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 
 		w.It("matches original buildTest2JSONArgs", func(it *gotest.T) {
 			targets := []gotestrunner.SuiteTarget{
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX"},
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX", RunFilter: "^TestX$/^Sub$"},
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX", RunFlags: []string{"-test.v", "-test.timeout=5s"}},
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX", RunFlags: []string{"-test.v=true"}},
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX", CoverProfile: "/c.out"},
-				{Package: "a/b", BinaryPath: "/bin/t", SuiteName: "TestX", RunFilter: "^TestX$/^Sub$", RunFlags: []string{"-test.v", "-test.count=2"}, CoverProfile: "/c.out"},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX"}, BinaryPath: "/bin/t"},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX", RunFilter: "^TestX$/^Sub$"}, BinaryPath: "/bin/t"},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX"}, BinaryPath: "/bin/t", RunFlags: []string{"-test.v", "-test.timeout=5s"}},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX"}, BinaryPath: "/bin/t", RunFlags: []string{"-test.v=true"}},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX"}, BinaryPath: "/bin/t", CoverProfile: "/c.out"},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a/b", SuiteName: "TestX", RunFilter: "^TestX$/^Sub$"}, BinaryPath: "/bin/t", RunFlags: []string{"-test.v", "-test.count=2"}, CoverProfile: "/c.out"},
 			}
 			refCtx := context.Background()
 			refEnv := []string{"A=1"}
@@ -615,9 +598,8 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 		w.It("resolves go to full path in test2json mode", func(it *gotest.T) {
 			ctx := context.Background()
 			target := gotestrunner.SuiteTarget{
-				Package:    "example.com/pkg",
+				SuiteSpec:  gotestrunner.SuiteSpec{Package: "example.com/pkg", SuiteName: "TestFoo"},
 				BinaryPath: "/tmp/pkg.test",
-				SuiteName:  "TestFoo",
 			}
 			cmd := gotestrunner.ExportBuildSuiteCmd(ctx, target, nil, true)
 
@@ -1260,6 +1242,133 @@ func (s *GotestrunnerTestSuite) TestOutputGolden(t *gotest.T) {
 			c.Finalize(nil)
 
 			gotest.MatchSnapshot(it, normalizeJSON(stdout.String()))
+		})
+	})
+}
+
+func (s *GotestrunnerTestSuite) TestParseExecFlags(t *gotest.T) {
+	t.When("parsing exec flags", func(w *gotest.T) {
+		w.It("extracts verbose flag", func(it *gotest.T) {
+			pf := gotestrunner.ParseExecFlags([]string{"-v", "./..."})
+			gotest.True(it, pf.Verbose)
+		})
+		w.It("extracts run filter", func(it *gotest.T) {
+			pf := gotestrunner.ParseExecFlags([]string{"-run", "TestFoo", "-v"})
+			gotest.Equal(it, "TestFoo", pf.UserRunFilter)
+		})
+		w.It("extracts cover profile", func(it *gotest.T) {
+			pf := gotestrunner.ParseExecFlags([]string{"-coverprofile=cover.out", "-v"})
+			gotest.Equal(it, "cover.out", pf.UserCoverProfile)
+		})
+		w.It("separates build and run flags", func(it *gotest.T) {
+			pf := gotestrunner.ParseExecFlags([]string{"-race", "-v", "-count=1"})
+			gotest.Contains(it, pf.BuildFlags, "-race")
+		})
+		w.It("handles empty args", func(it *gotest.T) {
+			pf := gotestrunner.ParseExecFlags(nil)
+			gotest.False(it, pf.Verbose)
+			gotest.Empty(it, pf.UserRunFilter)
+		})
+	})
+}
+
+func (s *GotestrunnerTestSuite) TestAssignCoverProfiles(t *gotest.T) {
+	t.When("assigning cover profiles", func(w *gotest.T) {
+		w.It("assigns sequential paths", func(it *gotest.T) {
+			targets := []gotestrunner.SuiteTarget{
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "pkg/a", SuiteName: "TestA"}},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "pkg/b", SuiteName: "TestB"}},
+			}
+			gotestrunner.ExportAssignCoverProfiles(targets, "/tmp/cover")
+			gotest.Equal(it, filepath.Join("/tmp/cover", "0.out"), targets[0].CoverProfile)
+			gotest.Equal(it, filepath.Join("/tmp/cover", "1.out"), targets[1].CoverProfile)
+		})
+	})
+}
+
+func (s *GotestrunnerTestSuite) TestBuildExtraEnv(t *gotest.T) {
+	t.When("building extra env", func(w *gotest.T) {
+		w.It("includes snapshot flag when set", func(it *gotest.T) {
+			env := gotestrunner.ExportBuildExtraEnv(gotestrunner.PipelineConfig{UpdateSnapshots: true}, nil)
+			gotest.Equal(it, "1", env[protocol.EnvUpdateSnapshots])
+		})
+		w.It("omits snapshot flag when not set", func(it *gotest.T) {
+			env := gotestrunner.ExportBuildExtraEnv(gotestrunner.PipelineConfig{}, nil)
+			_, ok := env[protocol.EnvUpdateSnapshots]
+			gotest.False(it, ok)
+		})
+		w.It("omits state file when no process", func(it *gotest.T) {
+			env := gotestrunner.ExportBuildExtraEnv(gotestrunner.PipelineConfig{}, nil)
+			_, ok := env[protocol.EnvSharedStateFile]
+			gotest.False(it, ok)
+		})
+	})
+}
+
+func (s *GotestrunnerTestSuite) TestSharedFixtureProcess(t *gotest.T) {
+	t.When("fixtureStateEntry parsing", func(w *gotest.T) {
+		w.It("parses fixture state line", func(it *gotest.T) {
+			line := `{"key":"pkg.Fixture","state":{"Host":"localhost"}}`
+			var entry gotestrunner.ExportFixtureStateEntry
+			err := json.Unmarshal([]byte(line), &entry)
+			gotest.NoError(it, err)
+			gotest.Equal(it, "pkg.Fixture", entry.Key)
+			gotest.NotEmpty(it, entry.State)
+		})
+		w.It("parses done sentinel", func(it *gotest.T) {
+			line := `{"key":"_done","teardownBudget":"2m30s"}`
+			var entry gotestrunner.ExportFixtureStateEntry
+			err := json.Unmarshal([]byte(line), &entry)
+			gotest.NoError(it, err)
+			gotest.Equal(it, "_done", entry.Key)
+			gotest.Equal(it, "2m30s", entry.TeardownBudget)
+		})
+		w.It("parses done sentinel with error", func(it *gotest.T) {
+			line := `{"key":"_done","error":"one or more shared fixtures failed"}`
+			var entry gotestrunner.ExportFixtureStateEntry
+			err := json.Unmarshal([]byte(line), &entry)
+			gotest.NoError(it, err)
+			gotest.Equal(it, "_done", entry.Key)
+			gotest.Equal(it, "one or more shared fixtures failed", entry.Error)
+		})
+	})
+
+	t.When("WriteStateFileForKeys", func(w *gotest.T) {
+		w.It("writes subset of state to file", func(it *gotest.T) {
+			tmpDir := it.T().TempDir()
+			proc := gotestrunner.ExportNewSharedFixtureProcess(tmpDir, map[string]json.RawMessage{
+				"pkg.Alpha": json.RawMessage(`{"Value":"a"}`),
+				"pkg.Beta":  json.RawMessage(`{"Value":"b"}`),
+				"pkg.Gamma": json.RawMessage(`{"Value":"c"}`),
+			})
+			path, err := proc.WriteStateFileForKeys("TestSuite", []string{"pkg.Alpha", "pkg.Gamma"})
+			gotest.NoError(it, err)
+			gotest.Contains(it, path, "TestSuite.json")
+
+			data, err := os.ReadFile(path)
+			gotest.NoError(it, err)
+			var state map[string]json.RawMessage
+			gotest.NoError(it, json.Unmarshal(data, &state))
+			gotest.Equal(it, 2, len(state))
+			_, hasAlpha := state["pkg.Alpha"]
+			gotest.True(it, hasAlpha)
+			_, hasBeta := state["pkg.Beta"]
+			gotest.False(it, hasBeta)
+			_, hasGamma := state["pkg.Gamma"]
+			gotest.True(it, hasGamma)
+		})
+	})
+
+	t.When("State", func(w *gotest.T) {
+		w.It("returns only requested keys", func(it *gotest.T) {
+			proc := gotestrunner.ExportNewSharedFixtureProcess("", map[string]json.RawMessage{
+				"pkg.Alpha": json.RawMessage(`{"a":1}`),
+				"pkg.Beta":  json.RawMessage(`{"b":2}`),
+			})
+			result := proc.State([]string{"pkg.Alpha"})
+			gotest.Equal(it, 1, len(result))
+			_, hasAlpha := result["pkg.Alpha"]
+			gotest.True(it, hasAlpha)
 		})
 	})
 }

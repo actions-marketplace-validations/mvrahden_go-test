@@ -11,16 +11,24 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mvrahden/go-test/internal/protocol"
 )
+
+// SuiteSpec identifies a test suite by its package and name. It carries only
+// the immutable identity fields — the "what to run" — without execution details.
+type SuiteSpec struct {
+	Package   string // import path (for reporting)
+	Dir       string // package source directory (working dir for the binary)
+	SuiteName string // test function name, e.g., "TestFooTestSuite"
+	RunFilter string // raw -test.run value (overrides SuiteName if set)
+}
 
 // SuiteTarget identifies a single test suite (or group of standalone tests)
 // to run in its own subprocess.
 type SuiteTarget struct {
-	Package      string   // import path (for reporting)
-	Dir          string   // package source directory (working dir for the binary)
+	SuiteSpec
 	BinaryPath   string   // path to compiled test binary
-	SuiteName    string   // test function name, e.g., "TestFooTestSuite"
-	RunFilter    string   // raw -test.run value (overrides SuiteName if set)
 	RunFlags     []string // test binary flags (with -test. prefix)
 	CoverProfile string   // per-suite cover profile path (empty if no -coverprofile)
 	BudgetFile   string   // sidecar path for teardown budget (empty = use default)
@@ -135,22 +143,18 @@ func buildSuiteCmd(ctx context.Context, target SuiteTarget, env []string, test2j
 		cmd := exec.CommandContext(ctx, "go", args...)
 		cmd.Env = env
 		if target.BudgetFile != "" {
-			cmd.Env = append(cmd.Env, "GOTEST_TEARDOWN_BUDGET_FILE="+target.BudgetFile)
+			cmd.Env = append(cmd.Env, protocol.EnvTeardownBudgetFile+"="+target.BudgetFile)
 		}
 		cmd.Dir = target.Dir
-		SetProcessGroup(cmd)
-		cmd.WaitDelay = 0
 		return cmd
 	}
 
 	cmd := exec.CommandContext(ctx, target.BinaryPath, testArgs...)
 	cmd.Env = env
 	if target.BudgetFile != "" {
-		cmd.Env = append(cmd.Env, "GOTEST_TEARDOWN_BUDGET_FILE="+target.BudgetFile)
+		cmd.Env = append(cmd.Env, protocol.EnvTeardownBudgetFile+"="+target.BudgetFile)
 	}
 	cmd.Dir = target.Dir
-	SetProcessGroup(cmd)
-	cmd.WaitDelay = 0
 	return cmd
 }
 
@@ -168,35 +172,20 @@ func RunSingleSuite(ctx context.Context, target SuiteTarget, env []string, test2
 
 	start := time.Now()
 
-	if err := cmd.Start(); err != nil {
+	mp := NewManagedProcess(cmd, ProcessConfig{
+		Grace:      GraceBudget,
+		BudgetFile: target.BudgetFile,
+	})
+	if err := mp.Start(); err != nil {
 		return SuiteResult{Target: target, ExitCode: 2, Duration: time.Since(start)}
 	}
 
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
-	var err error
-	select {
-	case err = <-done:
-	case <-ctx.Done():
-		budget := readTeardownBudget(target.BudgetFile)
-		select {
-		case err = <-done:
-		case <-time.After(budget):
-			ForceKillProcessGroup(cmd.Process.Pid)
-			err = <-done
-		}
-	}
-
+	mp.WaitWithGrace(ctx)
 	duration := time.Since(start)
 
 	exitCode := 0
-	if err != nil {
-		if cmd.ProcessState != nil {
-			exitCode = cmd.ProcessState.ExitCode()
-		} else {
-			exitCode = 2
-		}
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
 	}
 
 	return SuiteResult{
@@ -276,10 +265,12 @@ func BuildSuiteTargets(compiled []CompileResult, suitesByPkg map[string][]string
 				continue
 			}
 			target := SuiteTarget{
-				Package:    pkg,
-				Dir:        pkgDir,
+				SuiteSpec: SuiteSpec{
+					Package:   pkg,
+					Dir:       pkgDir,
+					SuiteName: testFuncName,
+				},
 				BinaryPath: bin,
-				SuiteName:  testFuncName,
 				RunFlags:   translatedFlags,
 			}
 			if rf := suiteRunFilter(userRunFilter, testFuncName); rf != "" {

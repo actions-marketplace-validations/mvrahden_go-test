@@ -1,4 +1,4 @@
-package main
+package gotestrunner
 
 import (
 	"bufio"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/mvrahden/go-test/internal/gotestgen"
-	"github.com/mvrahden/go-test/internal/gotestrunner"
 )
 
 // fixtureStateEntry represents a single JSON line emitted by the shared fixture subprocess.
@@ -34,12 +33,11 @@ type SharedFixtureProcess struct {
 	done            chan struct{}
 	teardownTimeout time.Duration
 
-	// Per-fixture readiness tracking.
-	ready    map[string]chan struct{}    // state key → closed when fixture ready
-	state    map[string]json.RawMessage // accumulated state
+	ready    map[string]chan struct{}
+	state    map[string]json.RawMessage
 	mu       sync.Mutex
-	allDone  chan struct{} // closed when _done received
-	setupErr error        // non-nil if _done had error
+	allDone  chan struct{}
+	setupErr error
 }
 
 // StateFile returns the path to the shared fixture state JSON file.
@@ -152,22 +150,26 @@ func (p *SharedFixtureProcess) Teardown() error {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	gotestrunner.TerminateProcessGroup(p.cmd.Process.Pid)
+	TerminateProcessGroup(p.cmd.Process.Pid)
 	select {
 	case <-p.done:
 	case <-time.After(timeout):
-		gotestrunner.ForceKillProcessGroup(p.cmd.Process.Pid)
+		ForceKillProcessGroup(p.cmd.Process.Pid)
+		<-p.done
+	}
+	if p.sharedDir != "" {
+		os.RemoveAll(p.sharedDir)
 	}
 	return nil
 }
 
-// startSharedFixtures generates a shared setup binary in the overlay temp dir,
+// StartSharedFixtures generates a shared setup binary in the overlay temp dir,
 // starts it as a subprocess, and returns a SharedFixtureProcess immediately.
 // A background goroutine reads JSON state lines from stdout, closing per-fixture
 // ready channels as each fixture completes. The caller must either wait on
 // individual Ready() channels (streaming) or call WaitAllReady (batch).
 // setupTimeout is stored as the initial teardownTimeout; 0 means no deadline.
-func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestgen.SharedFixtureInfo, setupTimeout time.Duration) (*SharedFixtureProcess, error) {
+func StartSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestgen.SharedFixtureInfo, setupTimeout time.Duration) (*SharedFixtureProcess, error) {
 	src, err := gotestgen.GenerateSharedSetup(fixtures)
 	if err != nil {
 		return nil, fmt.Errorf("generate shared setup: %w", err)
@@ -189,15 +191,19 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 	}
 	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", setupBin, setupFile)
 	buildCmd.Stderr = os.Stderr
-	gotestrunner.SetBuildProcessGroup(buildCmd)
-	if err := buildCmd.Run(); err != nil {
+	buildMp := NewManagedProcess(buildCmd, ProcessConfig{Grace: GraceKill})
+	if err := buildMp.Start(); err != nil {
+		return nil, fmt.Errorf("build shared fixture setup: %w", err)
+	}
+	if err := buildMp.WaitWithGrace(ctx); err != nil {
 		return nil, fmt.Errorf("build shared fixture setup: %w", err)
 	}
 
 	cmd := exec.CommandContext(ctx, setupBin)
 	cmd.Stderr = os.Stderr
-	gotestrunner.SetProcessGroup(cmd)
-	cmd.WaitDelay = 0 // Teardown() manages lifecycle via explicit SIGTERM/SIGKILL
+
+	SetProcessGroup(cmd)
+	cmd.WaitDelay = 5 * time.Second
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -217,12 +223,7 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 
 	allDone := make(chan struct{})
 	state := make(map[string]json.RawMessage)
-
 	waitDone := make(chan struct{})
-	go func() {
-		cmd.Wait()
-		close(waitDone)
-	}()
 
 	proc := &SharedFixtureProcess{
 		cmd:             cmd,
@@ -234,8 +235,11 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 		allDone:         allDone,
 	}
 
-	// Read streaming JSON lines from the subprocess stdout.
 	go func() {
+		defer func() {
+			cmd.Wait()
+			close(waitDone)
+		}()
 		closedReady := make(map[string]bool, len(ready))
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -264,7 +268,6 @@ func startSharedFixtures(ctx context.Context, tmpDir string, fixtures []gotestge
 				closedReady[entry.Key] = true
 			}
 		}
-		// Scanner ended without _done — subprocess crashed.
 		if err := scanner.Err(); err != nil {
 			proc.setupErr = fmt.Errorf("reading subprocess stdout: %w", err)
 		} else if proc.setupErr == nil {
