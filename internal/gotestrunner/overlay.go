@@ -12,6 +12,80 @@ import (
 	"github.com/mvrahden/go-test/internal/gotestgen"
 )
 
+type OverlayResult struct {
+	TmpDir           string
+	OverlayFlag      string
+	SharedFixtures   []gotestgen.SharedFixtureInfo
+	SuitePackages    []string
+	NoSuitePackages  []string
+	SuitesByPkg      map[string][]string
+	DirsByPkg        map[string]string
+	FixtureDepSuites                map[string]map[string]bool
+	SuiteRequiredSharedFixtureKeys map[string]map[string][]string
+}
+
+func GenerateOverlay(loaded []*gotestgen.LoadResult, debug bool) (*OverlayResult, func(), error) {
+	allResults, allSharedFixtures, err := gotestgen.GenerateFromLoaded(loaded)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	CleanStaleOverlays()
+
+	tmpDir, err := WriteOverlay(allResults)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cleanup := func() { os.RemoveAll(tmpDir) }
+	if debug {
+		fmt.Fprintf(os.Stderr, "DEBUG: overlay dir: %s\n", tmpDir)
+		cleanup = func() {}
+	}
+
+	var suitePkgs []string
+	var noSuitePkgs []string
+	suitesByPkg := map[string][]string{}
+	dirsByPkg := map[string]string{}
+	fixtureDepSuites := map[string]map[string]bool{}
+	suiteReqKeys := map[string]map[string][]string{}
+	for _, r := range allResults {
+		if len(r.PTest) > 0 || len(r.PXTest) > 0 {
+			suitePkgs = append(suitePkgs, r.PkgPath)
+		} else {
+			noSuitePkgs = append(noSuitePkgs, r.PkgPath)
+		}
+		if len(r.SuiteNames) > 0 {
+			suitesByPkg[r.PkgPath] = r.SuiteNames
+		}
+		if r.AbsPath != "" {
+			dirsByPkg[r.PkgPath] = r.AbsPath
+		}
+		if len(r.FixtureDepSuites) > 0 {
+			s := make(map[string]bool, len(r.FixtureDepSuites))
+			for _, fn := range r.FixtureDepSuites {
+				s[fn] = true
+			}
+			fixtureDepSuites[r.PkgPath] = s
+		}
+		if len(r.SuiteRequiredSharedFixtureKeys) > 0 {
+			suiteReqKeys[r.PkgPath] = r.SuiteRequiredSharedFixtureKeys
+		}
+	}
+
+	return &OverlayResult{
+		TmpDir:           tmpDir,
+		OverlayFlag:      "-overlay=" + filepath.Join(tmpDir, "overlay.json"),
+		SharedFixtures:   allSharedFixtures,
+		SuitePackages:    suitePkgs,
+		NoSuitePackages:  noSuitePkgs,
+		SuitesByPkg:      suitesByPkg,
+		DirsByPkg:        dirsByPkg,
+		FixtureDepSuites:                fixtureDepSuites,
+		SuiteRequiredSharedFixtureKeys: suiteReqKeys,
+	}, cleanup, nil
+}
+
 type overlayJSON struct {
 	Replace map[string]string `json:"Replace"`
 }
