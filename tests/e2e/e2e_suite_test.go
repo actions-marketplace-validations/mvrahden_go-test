@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mvrahden/go-test/about"
 	"github.com/mvrahden/go-test/pkg/gotest"
@@ -139,6 +140,25 @@ func (s *E2ETestSuite) TestTestsuiteCLIExitCode(t *gotest.T) {
 	exitErr, ok := err.(*exec.ExitError)
 	gotest.True(t, ok, "expected *exec.ExitError, got %T: %v", err, err)
 	gotest.True(t, exitErr.ExitCode() != 0, "expected non-zero exit code")
+}
+
+func (s *E2ETestSuite) TestSharedFixtureExitTiming(t *gotest.T) {
+	t.When("running packages with shared fixtures", func(w *gotest.T) {
+		w.It("exits promptly after all tests complete", func(it *gotest.T) {
+			cmd := exec.Command(s.binary,
+				"github.com/mvrahden/go-test/tests/sharedfixture/...",
+				"-json", "-count=1")
+			cmd.Dir = s.workDir
+
+			start := time.Now()
+			out, err := cmd.CombinedOutput()
+			elapsed := time.Since(start)
+
+			gotest.NoError(it, err, "shared fixture tests should pass: %s", string(out))
+			gotest.True(it, elapsed < 60*time.Second,
+				"should exit promptly after tests complete (no process hang), took %v", elapsed)
+		})
+	})
 }
 
 func (s *E2ETestSuite) TestOutputFormatGolden(t *gotest.T) {
