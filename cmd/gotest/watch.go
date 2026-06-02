@@ -76,6 +76,7 @@ func runWatch(inv Invocation) int {
 		Debug:           slices.Contains(ownArgs, "--debug"),
 		CI:              slices.Contains(ownArgs, "--ci"),
 		UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
+		NoCache:         slices.Contains(ownArgs, "--no-cache"),
 		Parallel:        parallel,
 	}
 
@@ -178,7 +179,7 @@ func watchRunOnce(ctx context.Context, cfg ExecConfig, jsonMode bool) int {
 		}
 	}
 
-	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, cfg.Debug)
+	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, cfg.Debug, cfg.NoCache)
 	if err != nil {
 		if jsonMode {
 			fmt.Printf("{\"Action\":\"watch-error\",\"Output\":%q}\n", err.Error())

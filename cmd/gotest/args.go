@@ -53,6 +53,7 @@ type ExecConfig struct {
 	CI              bool
 	JSON            bool
 	UpdateSnapshots bool
+	NoCache         bool
 	Parallel        int
 }
 

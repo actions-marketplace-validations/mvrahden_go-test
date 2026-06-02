@@ -139,6 +139,7 @@ func runTest(inv Invocation) int {
 		CI:              slices.Contains(ownArgs, "--ci"),
 		JSON:            jsonMode,
 		UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
+		NoCache:         slices.Contains(ownArgs, "--no-cache"),
 		Parallel:        parallel,
 	}
 

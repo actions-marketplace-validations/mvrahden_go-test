@@ -36,7 +36,7 @@ func runPrepare(inv Invocation) int {
 	ctx, stop := signal.NotifyContext(context.Background(),
 		shutdownSignals...)
 
-	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, false)
+	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, false, false)
 	if err != nil {
 		stop()
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
