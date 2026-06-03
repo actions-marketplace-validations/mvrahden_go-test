@@ -17,6 +17,7 @@ import (
 type SnapshotGroupingTestSuite struct{}
 
 func (s *SnapshotGroupingTestSuite) TestMatchSnapshotGrouping(t *gotest.T) {
+	t.T().Setenv(protocol.EnvCI, "0")
 	snapDir := filepath.Join("testdata", "__snapshots__")
 	t.T().Cleanup(func() { os.Remove(filepath.Join(snapDir, "TestSnapshotGroupingTestSuite_ext.snap")) })
 
@@ -73,6 +74,7 @@ func (s *SnapshotGroupingTestSuite) TestMatchSnapshotGrouping(t *gotest.T) {
 type SnapshotConcurrencyTestSuite struct{}
 
 func (s *SnapshotConcurrencyTestSuite) TestMatchSnapshotConcurrency(t *gotest.T) {
+	t.T().Setenv(protocol.EnvCI, "0")
 	snapDir := filepath.Join("testdata", "__snapshots__")
 	t.T().Cleanup(func() { os.Remove(filepath.Join(snapDir, "TestSnapshotConcurrencyTestSuite_ext.snap")) })
 
@@ -90,6 +92,7 @@ func (s *SnapshotConcurrencyTestSuite) TestMatchSnapshotConcurrency(t *gotest.T)
 type SnapshotUpdateTestSuite struct{}
 
 func (s *SnapshotUpdateTestSuite) TestMatchSnapshotUpdate(t *gotest.T) {
+	t.T().Setenv(protocol.EnvCI, "0")
 	snapDir := filepath.Join("testdata", "__snapshots__")
 	t.T().Cleanup(func() { os.Remove(filepath.Join(snapDir, "TestSnapshotUpdateTestSuite_ext.snap")) })
 
@@ -132,6 +135,7 @@ type snapshotNamedString string
 type SnapshotTestSuite struct{}
 
 func (s *SnapshotTestSuite) TestMatchSnapshot(t *gotest.T) {
+	t.T().Setenv(protocol.EnvCI, "0")
 	snapDir := filepath.Join("testdata", "__snapshots__")
 	t.T().Cleanup(func() { os.Remove(filepath.Join(snapDir, "TestSnapshotTestSuite_ext.snap")) })
 
@@ -181,6 +185,7 @@ func (s *SnapshotTestSuite) TestMatchSnapshot(t *gotest.T) {
 }
 
 func (s *SnapshotTestSuite) TestSnapshotContent(t *gotest.T) {
+	t.T().Setenv(protocol.EnvCI, "0")
 	snapDir := filepath.Join("testdata", "__snapshots__")
 
 	snapPath := filepath.Join(snapDir, "TestSnapshotTestSuite_ext.snap")

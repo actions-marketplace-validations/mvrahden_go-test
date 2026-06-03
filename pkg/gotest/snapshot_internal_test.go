@@ -6,6 +6,7 @@
 package gotest //nolint:stdlib-test
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -143,6 +144,77 @@ func TestMatchSnapshot_MatchesAfterCRLFFileCorruption(t *testing.T) {
 
 	MatchSnapshot(t, "stable value")
 }
+
+func TestSnapshotReadonly(t *testing.T) {
+	t.Run("GOTEST_CI=1 is readonly", func(t *testing.T) {
+		t.Setenv("GOTEST_CI", "1")
+		if !snapshotReadonly() {
+			t.Fatal("expected readonly")
+		}
+	})
+	t.Run("GOTEST_CI=true is readonly", func(t *testing.T) {
+		t.Setenv("GOTEST_CI", "true")
+		if !snapshotReadonly() {
+			t.Fatal("expected readonly")
+		}
+	})
+	t.Run("GOTEST_CI=0 is writable", func(t *testing.T) {
+		t.Setenv("GOTEST_CI", "0")
+		if snapshotReadonly() {
+			t.Fatal("expected writable")
+		}
+	})
+	t.Run("GOTEST_CI unset is writable", func(t *testing.T) {
+		t.Setenv("GOTEST_CI", "")
+		if snapshotReadonly() {
+			t.Fatal("expected writable")
+		}
+	})
+}
+
+func TestMatchSnapshot_CIMode_FailsOnMissingBaseline(t *testing.T) {
+	snapDir := filepath.Join(thisDir(), "testdata", "__snapshots__")
+	snapFile := filepath.Join(snapDir, "TestMatchSnapshot_CIMode_FailsOnMissingBaseline.snap")
+	t.Cleanup(func() { os.Remove(snapFile) })
+
+	t.Setenv("GOTEST_CI", "1")
+
+	mock := &mockT{name: "TestMatchSnapshot_CIMode_FailsOnMissingBaseline/subtest"}
+	MatchSnapshot(mock, "new-value")
+
+	if !mock.failed {
+		t.Fatal("expected MatchSnapshot to fail in CI mode when no baseline exists")
+	}
+	if !strings.Contains(mock.msg, "no baseline snapshot") {
+		t.Fatalf("expected 'no baseline snapshot' message, got: %s", mock.msg)
+	}
+
+	if _, err := os.Stat(snapFile); err == nil {
+		t.Fatal("expected snapshot file to NOT be written in CI mode")
+	}
+}
+
+func TestMatchSnapshot_CIMode_ComparesExistingBaseline(t *testing.T) {
+	snapDir := filepath.Join(thisDir(), "testdata", "__snapshots__")
+	snapFile := filepath.Join(snapDir, "TestMatchSnapshot_CIMode_ComparesExistingBaseline.snap")
+	t.Cleanup(func() { os.Remove(snapFile) })
+
+	MatchSnapshot(t, "expected value")
+
+	t.Setenv("GOTEST_CI", "1")
+	MatchSnapshot(t, "expected value")
+}
+
+type mockT struct {
+	name   string
+	failed bool
+	msg    string
+}
+
+func (m *mockT) Helper()                           {}
+func (m *mockT) FailNow()                          {}
+func (m *mockT) Name() string                      { return m.name }
+func (m *mockT) Errorf(format string, args ...any) { m.failed = true; m.msg = fmt.Sprintf(format, args...) }
 
 func TestReadAndRestore_SeekableReader(t *testing.T) {
 	r := strings.NewReader("test data")

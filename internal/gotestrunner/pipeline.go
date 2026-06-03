@@ -30,6 +30,7 @@ type PipelineConfig struct {
 	GoTestArgs      []string
 	SetupTimeout    time.Duration
 	UpdateSnapshots bool
+	CI              bool
 	Parallel        int
 	Streaming       bool
 	OutputMode      RunMode
@@ -41,6 +42,9 @@ type PipelineResult struct {
 }
 
 func RunPipeline(ctx context.Context, cfg PipelineConfig, overlay *OverlayResult) (PipelineResult, error) {
+	if !cfg.CI && os.Getenv(protocol.EnvCI) == "" && os.Getenv("CI") != "" {
+		cfg.CI = true
+	}
 	pf := ParseExecFlags(cfg.GoTestArgs)
 
 	if cfg.Streaming {
@@ -54,6 +58,9 @@ func buildExtraEnv(cfg PipelineConfig, proc *SharedFixtureProcess) map[string]st
 	if cfg.UpdateSnapshots {
 		env[protocol.EnvUpdateSnapshots] = "1"
 	}
+	if cfg.CI {
+		env[protocol.EnvCI] = "1"
+	}
 	if proc != nil {
 		env[protocol.EnvSharedStateFile] = proc.StateFile()
 	}
@@ -64,6 +71,9 @@ func buildBaseEnv(cfg PipelineConfig) []string {
 	env := os.Environ()
 	if cfg.UpdateSnapshots {
 		env = append(env, protocol.EnvUpdateSnapshots+"=1")
+	}
+	if cfg.CI {
+		env = append(env, protocol.EnvCI+"=1")
 	}
 	return env
 }
