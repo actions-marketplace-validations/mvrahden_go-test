@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sync"
 	"time"
 )
@@ -173,7 +175,8 @@ func (c *OutputCollector) EmitSkippedSuites(skippedByPkg map[string][]string) {
 	defer c.mu.Unlock()
 	w := c.jsonWriter()
 	now := time.Now()
-	for pkg, names := range skippedByPkg {
+	for _, pkg := range slices.Sorted(maps.Keys(skippedByPkg)) {
+		names := skippedByPkg[pkg]
 		for _, name := range names {
 			testFunc := "Test" + name
 			writeJSONLine(w, map[string]any{
