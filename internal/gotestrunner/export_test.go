@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
+	"github.com/mvrahden/go-test/internal/gotestgen"
 	"github.com/mvrahden/go-test/internal/protocol"
 )
 
@@ -17,12 +18,19 @@ var ExportSuiteRunFilter = suiteRunFilter
 var ExportAssignCoverProfiles = assignCoverProfiles
 var ExportBuildExtraEnv = buildExtraEnv
 var ExportBuildBaseEnv = buildBaseEnv
+var ExportOverlayContentHash = overlayContentHash
+var ExportCacheRoot = cacheRoot
 
 func ExportAutoDetectCI(cfg PipelineConfig) PipelineConfig {
 	if !cfg.CI && os.Getenv(protocol.EnvCI) == "" && os.Getenv("CI") != "" {
 		cfg.CI = true
 	}
 	return cfg
+}
+
+func ExportWriteOverlayCached(results gotestgen.GenerateResults, noCache bool) (string, error) {
+	dir, _, err := writeOverlayCached(results, noCache)
+	return dir, err
 }
 
 var SetBuildProcessGroup = setBuildProcessGroup
