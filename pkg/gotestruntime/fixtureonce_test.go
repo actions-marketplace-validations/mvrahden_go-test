@@ -2,6 +2,8 @@ package gotestruntime_test
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 
 	"github.com/mvrahden/go-test/pkg/gotest"
 	"github.com/mvrahden/go-test/pkg/gotestruntime"
@@ -55,6 +57,26 @@ func (s *FixtureOnceTestSuite) TestDo(t *gotest.T) {
 			gotest.ErrorIs(it, err1, expected)
 			gotest.ErrorIs(it, err2, expected)
 			gotest.Equal(it, 1, calls)
+		})
+	})
+
+	t.When("called concurrently", func(w *gotest.T) {
+		w.It("initializes exactly once", func(it *gotest.T) {
+			var fo gotestruntime.FixtureOnce
+			var calls atomic.Int32
+			var wg sync.WaitGroup
+			for range 20 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					fo.Do(func() error {
+						calls.Add(1)
+						return nil
+					})
+				}()
+			}
+			wg.Wait()
+			gotest.Equal(it, int32(1), calls.Load())
 		})
 	})
 }

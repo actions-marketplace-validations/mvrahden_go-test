@@ -59,6 +59,12 @@ func (s *RendererTestSuite) TestFixtureRendering(t *gotest.T) {
 			gotest.Contains(it, output, `t.Run("TestInsert"`, "expected TestInsert test case")
 			gotest.Contains(it, output, `t.Run("TestSelect"`, "expected TestSelect test case")
 
+			// Verify old TestMain pattern is fully eliminated
+			gotest.NotContains(it, output, "func TestMain(m *testing.M)", "should NOT have TestMain")
+			gotest.NotContains(it, output, "RunFixtureMain", "should NOT have RunFixtureMain")
+			gotest.Contains(it, output, "ƒ_setupFixtures(t)", "expected ƒ_setupFixtures call site in TestX")
+			gotest.Contains(it, output, "t.Cleanup(func() { ƒ_fixtureDAG.Teardown() })", "expected teardown via t.Cleanup")
+
 			// Verify it does NOT contain old-style patterns
 			gotest.NotContains(it, output, "func Test_DBFixture(", "should NOT have old-style Test_DBFixture")
 			gotest.NotContains(it, output, "go:linkname", "should NOT have linkname directives")
@@ -90,6 +96,8 @@ func (s *RendererTestSuite) TestFixtureRendering(t *gotest.T) {
 			gotest.Contains(it, output, "gotestruntime.SetupFixtureDAG(", "expected SetupFixtureDAG")
 			gotest.Contains(it, output, "func TestBoundTestSuite(t *testing.T)", "expected top-level TestBoundTestSuite func")
 			gotest.Contains(it, output, "func TestStandaloneTestSuite(t *testing.T)", "expected standalone test func")
+			gotest.NotContains(it, output, "func TestMain(m *testing.M)", "should NOT have TestMain")
+			gotest.NotContains(it, output, "RunFixtureMain", "should NOT have RunFixtureMain")
 		})
 	})
 
@@ -245,6 +253,9 @@ func (s *RendererTestSuite) TestSharedFixture(t *gotest.T) {
 			gotest.Contains(it, output, `"E2EFixture"`)
 
 			// Old patterns should NOT be present
+			gotest.NotContains(it, output, "func TestMain(m *testing.M)", "should NOT have TestMain")
+			gotest.NotContains(it, output, "RunFixtureMain", "should NOT have RunFixtureMain")
+			gotest.Contains(it, output, "ƒ_setupFixtures(t)", "expected ƒ_setupFixtures call site in TestX")
 			gotest.NotContains(it, output, "SharedFixtureBinding", "should NOT have old SharedFixtureBinding")
 			gotest.NotContains(it, output, "ƒ_sf0_E2EFixture", "should NOT have old sf0 variable naming")
 		})
