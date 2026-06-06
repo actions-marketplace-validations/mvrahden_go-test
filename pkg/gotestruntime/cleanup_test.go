@@ -1,4 +1,4 @@
-package gotestruntime
+package gotestruntime //nolint:stdlib-test
 
 import (
 	"testing"
