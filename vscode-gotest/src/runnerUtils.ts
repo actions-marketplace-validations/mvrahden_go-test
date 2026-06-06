@@ -202,6 +202,109 @@ export interface AppliedResult {
   duration?: number;
 }
 
+export function applyEvent(
+  controller: GoTestController,
+  run: vscode.TestRun,
+  event: TestEvent,
+  outputMap: Map<string, string>,
+  importPath: string,
+  pkgDir: string,
+): AppliedResult | undefined {
+  if (event.Action === "output" && event.Test) {
+    const existing = outputMap.get(event.Test) ?? "";
+    outputMap.set(event.Test, existing + (event.Output ?? ""));
+  }
+
+  if (event.Action === "output" && event.Output) {
+    if (!event.Test && /^exit status \d+\n?$/.test(event.Output)) {
+      return undefined;
+    }
+    const line = event.Output.replace(/\n$/, "\r\n");
+    const testItem = event.Test
+      ? resolveTestItem(controller, event.Test, importPath)
+      : undefined;
+    run.appendOutput(line, undefined, testItem);
+    return undefined;
+  }
+
+  if (!event.Test) {
+    if (
+      event.Action === "pass" ||
+      event.Action === "fail" ||
+      event.Action === "skip"
+    ) {
+      const duration =
+        event.Elapsed !== undefined ? event.Elapsed * 1000 : undefined;
+      controller.recordResult(importPath, event.Action, duration);
+
+      const pkgItem = controller.findItem(importPath);
+      if (pkgItem) {
+        if (event.Action === "fail") {
+          run.failed(pkgItem, [], duration);
+        } else if (event.Action === "pass") {
+          run.passed(pkgItem, duration);
+        } else {
+          run.skipped(pkgItem);
+        }
+        resolveAncestorsOf(run, pkgItem, controller);
+      }
+      return { itemId: importPath, status: event.Action, duration };
+    }
+    return undefined;
+  }
+
+  const item = resolveTestItem(controller, event.Test, importPath);
+  if (!item) {
+    return undefined;
+  }
+
+  const duration =
+    event.Elapsed !== undefined ? event.Elapsed * 1000 : undefined;
+
+  switch (event.Action) {
+    case "pass":
+      run.passed(item, duration);
+      controller.recordResult(item.id, "pass", duration);
+      return { itemId: item.id, status: "pass", duration };
+    case "fail": {
+      const output = outputMap.get(event.Test) ?? "";
+      const testMessages = extractTestMessages(output, pkgDir);
+      const vscodeMessages = testMessages.map((msg) => {
+        const parsed = parseExpectedActual(msg.message);
+        const message = new vscode.TestMessage(
+          parsed
+            ? `${msg.message.split("\n")[0].replace(/:\s*$/, "")}: expected ${parsed.expected}, actual ${parsed.actual}`
+            : msg.message,
+        );
+        if (parsed) {
+          message.expectedOutput = parsed.expected;
+          message.actualOutput = parsed.actual;
+        }
+        message.location = new vscode.Location(
+          vscode.Uri.file(msg.file),
+          new vscode.Position(msg.line - 1, 0),
+        );
+        return message;
+      });
+      if (vscodeMessages.length === 0) {
+        vscodeMessages.push(new vscode.TestMessage(output || "Test failed"));
+      }
+      run.failed(item, vscodeMessages, duration);
+      controller.recordResult(item.id, "fail", duration);
+      return { itemId: item.id, status: "fail", duration };
+    }
+    case "skip":
+      run.skipped(item);
+      controller.recordResult(item.id, "skip", undefined);
+      return { itemId: item.id, status: "skip", duration: undefined };
+    case "run":
+      run.started(item);
+      return undefined;
+  }
+
+  return undefined;
+}
+
 export function applyResults(
   controller: GoTestController,
   run: vscode.TestRun,
@@ -210,107 +313,11 @@ export function applyResults(
   pkgDir: string,
 ): AppliedResult[] {
   const outputMap = new Map<string, string>();
-
-  for (const event of events) {
-    if (event.Action === "output" && event.Test) {
-      const existing = outputMap.get(event.Test) ?? "";
-      outputMap.set(event.Test, existing + (event.Output ?? ""));
-    }
-  }
-
   const applied: AppliedResult[] = [];
-
   for (const event of events) {
-    if (event.Action === "output" && event.Output) {
-      if (!event.Test && /^exit status \d+\n?$/.test(event.Output)) {
-        continue;
-      }
-      const line = event.Output.replace(/\n$/, "\r\n");
-      const testItem = event.Test
-        ? resolveTestItem(controller, event.Test, importPath)
-        : undefined;
-      run.appendOutput(line, undefined, testItem);
-    }
-
-    if (!event.Test) {
-      if (
-        event.Action === "pass" ||
-        event.Action === "fail" ||
-        event.Action === "skip"
-      ) {
-        const duration =
-          event.Elapsed !== undefined ? event.Elapsed * 1000 : undefined;
-        applied.push({ itemId: importPath, status: event.Action, duration });
-        controller.recordResult(importPath, event.Action, duration);
-
-        const pkgItem = controller.findItem(importPath);
-        if (pkgItem) {
-          if (event.Action === "fail") {
-            run.failed(pkgItem, [], duration);
-          } else if (event.Action === "pass") {
-            run.passed(pkgItem, duration);
-          } else {
-            run.skipped(pkgItem);
-          }
-          resolveAncestorsOf(run, pkgItem, controller);
-        }
-      }
-      continue;
-    }
-
-    const item = resolveTestItem(controller, event.Test, importPath);
-    if (!item) {
-      continue;
-    }
-
-    const duration =
-      event.Elapsed !== undefined ? event.Elapsed * 1000 : undefined;
-
-    switch (event.Action) {
-      case "pass":
-        run.passed(item, duration);
-        applied.push({ itemId: item.id, status: "pass", duration });
-        controller.recordResult(item.id, "pass", duration);
-        break;
-      case "fail": {
-        const output = outputMap.get(event.Test) ?? "";
-        const testMessages = extractTestMessages(output, pkgDir);
-        const vscodeMessages = testMessages.map((msg) => {
-          const parsed = parseExpectedActual(msg.message);
-          const message = new vscode.TestMessage(
-            parsed
-              ? `${msg.message.split("\n")[0].replace(/:\s*$/, "")}: expected ${parsed.expected}, actual ${parsed.actual}`
-              : msg.message,
-          );
-          if (parsed) {
-            message.expectedOutput = parsed.expected;
-            message.actualOutput = parsed.actual;
-          }
-          message.location = new vscode.Location(
-            vscode.Uri.file(msg.file),
-            new vscode.Position(msg.line - 1, 0),
-          );
-          return message;
-        });
-        if (vscodeMessages.length === 0) {
-          vscodeMessages.push(new vscode.TestMessage(output || "Test failed"));
-        }
-        run.failed(item, vscodeMessages, duration);
-        applied.push({ itemId: item.id, status: "fail", duration });
-        controller.recordResult(item.id, "fail", duration);
-        break;
-      }
-      case "skip":
-        run.skipped(item);
-        applied.push({ itemId: item.id, status: "skip", duration: undefined });
-        controller.recordResult(item.id, "skip", undefined);
-        break;
-      case "run":
-        run.started(item);
-        break;
-    }
+    const result = applyEvent(controller, run, event, outputMap, importPath, pkgDir);
+    if (result) applied.push(result);
   }
-
   return applied;
 }
 
