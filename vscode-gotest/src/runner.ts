@@ -296,7 +296,6 @@ export class TestRunner {
       label: "runner",
       env,
       coverage: coverOnRun ? { store: this.coverageStore! } : undefined,
-      onResults: () => {},
     });
     this._lastJsonOutput += result.stdout;
   }

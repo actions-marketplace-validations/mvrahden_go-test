@@ -397,16 +397,7 @@ export class WatchManager implements vscode.Disposable {
     for (const [importPath, pkgEvents] of byPackage) {
       const pkgDir = this.cache.resolveImportPath(importPath);
       if (pkgDir) {
-        const applied = applyResults(
-          this.controller,
-          run,
-          pkgEvents,
-          importPath,
-          pkgDir,
-        );
-        for (const r of applied) {
-          this.controller.recordResult(r.itemId, r.status, r.duration);
-        }
+        applyResults(this.controller, run, pkgEvents, importPath, pkgDir);
       }
     }
 
