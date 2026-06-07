@@ -70,7 +70,7 @@ func includesElement(s, element any) (found, valid bool) {
 		return false, true
 	case reflect.Map:
 		mapKey := reflect.ValueOf(element)
-		if !mapKey.IsValid() {
+		if !mapKey.IsValid() || !mapKey.Type().AssignableTo(rv.Type().Key()) {
 			return false, true
 		}
 		return rv.MapIndex(mapKey).IsValid(), true

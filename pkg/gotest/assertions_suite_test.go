@@ -746,6 +746,11 @@ func (s *AssertionsTestSuite) TestContains(t *gotest.T) {
 			gotest.True(it, m.Failed())
 			gotest.Contains(it, m.Message(), "not a string, slice, array, or map")
 		})
+		w.It("fails with type error for map with mismatched key type", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.Contains(r, map[string]int{"a": 1}, 42) })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "does not contain")
+		})
 	})
 }
 
@@ -810,6 +815,10 @@ func (s *AssertionsTestSuite) TestNotContains(t *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.NotContains(r, 42, 2) })
 			gotest.True(it, m.Failed())
 			gotest.Contains(it, m.Message(), "not a string, slice, array, or map")
+		})
+		w.It("passes without panic for map with mismatched key type", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.NotContains(r, map[string]int{"a": 1}, 42) })
+			gotest.False(it, m.Failed())
 		})
 	})
 }
