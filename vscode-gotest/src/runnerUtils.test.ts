@@ -47,10 +47,12 @@ import {
   computeWildcard,
   resolveRunPatterns,
   applyResults,
+  applyEvent,
   enqueueDescendants,
-  enqueueAncestors,
+  startAncestors,
   resolveAncestorItems,
   resolveAncestorsOf,
+  skipUnresolved,
 } from "./runnerUtils.js";
 import { buildPathTrie, collapsePathTrie, type PathNode } from "./pathTrie.js";
 
@@ -683,6 +685,277 @@ describe("applyResults", () => {
   });
 });
 
+describe("applyEvent", () => {
+  function makeApplyEventFixture() {
+    const suiteItem = createItem("example.com/pkg/MySuite", "MySuite");
+    const passItem = createItem(
+      "example.com/pkg/MySuite/TestPass",
+      "TestPass",
+      suiteItem,
+    );
+    const failItem = createItem(
+      "example.com/pkg/MySuite/TestFail",
+      "TestFail",
+      suiteItem,
+    );
+    const skipItem = createItem(
+      "example.com/pkg/MySuite/TestSkip",
+      "TestSkip",
+      suiteItem,
+    );
+    const pkgItem = createItem("example.com/pkg", "pkg", undefined, [
+      { id: "package" },
+    ]);
+
+    const itemMap = new Map<string, MockTestItem>([
+      ["example.com/pkg", pkgItem],
+      ["example.com/pkg/MySuite", suiteItem],
+      ["example.com/pkg/MySuite/TestPass", passItem],
+      ["example.com/pkg/MySuite/TestFail", failItem],
+      ["example.com/pkg/MySuite/TestSkip", skipItem],
+    ]);
+
+    const results = new Map<string, { status: string; duration?: number }>();
+
+    const controller = {
+      findItem: vi.fn((id: string) => itemMap.get(id) ?? undefined),
+      recordResult: vi.fn((id: string, status: string, duration?: number) => {
+        results.set(id, { status, duration });
+      }),
+      getResult: vi.fn((id: string) => results.get(id)),
+      createDynamicSubtest: vi.fn(),
+    };
+
+    const run = {
+      passed: vi.fn(),
+      failed: vi.fn(),
+      skipped: vi.fn(),
+      started: vi.fn(),
+      appendOutput: vi.fn(),
+    };
+
+    return {
+      controller,
+      run,
+      pkgItem,
+      suiteItem,
+      passItem,
+      failItem,
+      skipItem,
+    };
+  }
+
+  it("processes 'run' event — calls run.started, returns undefined", () => {
+    const { controller, run, passItem } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+
+    const result = applyEvent(
+      controller as any,
+      run as any,
+      {
+        Action: "run",
+        Test: "TestMySuite/TestPass",
+        Package: "example.com/pkg",
+      } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(result).toBeUndefined();
+    expect(run.started).toHaveBeenCalledWith(passItem);
+  });
+
+  it("processes 'pass' event — calls run.passed, records result, returns AppliedResult", () => {
+    const { controller, run, passItem } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+
+    const result = applyEvent(
+      controller as any,
+      run as any,
+      {
+        Action: "pass",
+        Test: "TestMySuite/TestPass",
+        Package: "example.com/pkg",
+        Elapsed: 0.1,
+      } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(result).toEqual({
+      itemId: passItem.id,
+      status: "pass",
+      duration: 100,
+    });
+    expect(run.passed).toHaveBeenCalledWith(passItem, 100);
+    expect(controller.recordResult).toHaveBeenCalledWith(
+      passItem.id,
+      "pass",
+      100,
+    );
+  });
+
+  it("processes 'skip' event — calls run.skipped, records result, returns AppliedResult", () => {
+    const { controller, run, skipItem } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+
+    const result = applyEvent(
+      controller as any,
+      run as any,
+      {
+        Action: "skip",
+        Test: "TestMySuite/TestSkip",
+        Package: "example.com/pkg",
+      } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(result).toEqual({
+      itemId: skipItem.id,
+      status: "skip",
+      duration: undefined,
+    });
+    expect(run.skipped).toHaveBeenCalledWith(skipItem);
+    expect(controller.recordResult).toHaveBeenCalledWith(
+      skipItem.id,
+      "skip",
+      undefined,
+    );
+  });
+
+  it("processes 'output' event — accumulates in outputMap, appends to run", () => {
+    const { controller, run } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+
+    const result = applyEvent(
+      controller as any,
+      run as any,
+      {
+        Action: "output",
+        Test: "TestMySuite/TestFail",
+        Package: "example.com/pkg",
+        Output: "    fail_test.go:14: boom\n",
+      } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(result).toBeUndefined();
+    expect(outputMap.get("TestMySuite/TestFail")).toBe(
+      "    fail_test.go:14: boom\n",
+    );
+    expect(run.appendOutput).toHaveBeenCalled();
+  });
+
+  it("processes 'fail' event — uses accumulated output for diagnostics", () => {
+    const { controller, run, failItem } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+    outputMap.set(
+      "TestMySuite/TestFail",
+      "    fail_test.go:14: Equal failed:\n          expected: 1\n          actual:   2\n",
+    );
+
+    const result = applyEvent(
+      controller as any,
+      run as any,
+      {
+        Action: "fail",
+        Test: "TestMySuite/TestFail",
+        Package: "example.com/pkg",
+        Elapsed: 0.2,
+      } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(result).toEqual({
+      itemId: failItem.id,
+      status: "fail",
+      duration: 200,
+    });
+    expect(run.failed).toHaveBeenCalledWith(failItem, expect.any(Array), 200);
+    expect(controller.recordResult).toHaveBeenCalledWith(
+      failItem.id,
+      "fail",
+      200,
+    );
+  });
+
+  it("processes package terminal event — resolves package and ancestors", () => {
+    const { controller, run, pkgItem } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+
+    const result = applyEvent(
+      controller as any,
+      run as any,
+      { Action: "pass", Package: "example.com/pkg", Elapsed: 1.5 } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(result).toEqual({
+      itemId: "example.com/pkg",
+      status: "pass",
+      duration: 1500,
+    });
+    expect(run.passed).toHaveBeenCalledWith(pkgItem, 1500);
+    expect(controller.recordResult).toHaveBeenCalledWith(
+      "example.com/pkg",
+      "pass",
+      1500,
+    );
+  });
+
+  it("returns undefined for unknown test path", () => {
+    const { controller, run } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+
+    const result = applyEvent(
+      controller as any,
+      run as any,
+      {
+        Action: "pass",
+        Test: "TestUnknown/Method",
+        Package: "example.com/pkg",
+        Elapsed: 0.1,
+      } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(result).toBeUndefined();
+    expect(run.passed).not.toHaveBeenCalled();
+  });
+
+  it("filters 'exit status' output lines", () => {
+    const { controller, run } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+
+    applyEvent(
+      controller as any,
+      run as any,
+      {
+        Action: "output",
+        Package: "example.com/pkg",
+        Output: "exit status 1\n",
+      } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(run.appendOutput).not.toHaveBeenCalled();
+  });
+});
+
 describe("computeWildcard", () => {
   it("returns undefined for a single path", () => {
     expect(computeWildcard(["example.com/pkg/a"])).toBeUndefined();
@@ -1112,20 +1385,20 @@ describe("resolveAncestorItems", () => {
   });
 });
 
-describe("enqueueAncestors", () => {
-  it("enqueues all ancestors of given items", () => {
+describe("startAncestors", () => {
+  it("starts all ancestors of given items", () => {
     const root = createItem("dir:pkg", "pkg", undefined);
     const sub = createItem("dir:pkg/sub", "sub", root);
     const pkg = createItem("example.com/pkg/sub/a", "a", sub, [
       { id: "package" },
     ]);
 
-    const run = { enqueued: vi.fn() };
-    enqueueAncestors(run as any, [pkg as any]);
+    const run = { started: vi.fn() };
+    startAncestors(run as any, [pkg as any]);
 
-    expect(run.enqueued).toHaveBeenCalledTimes(2);
-    expect(run.enqueued).toHaveBeenCalledWith(sub);
-    expect(run.enqueued).toHaveBeenCalledWith(root);
+    expect(run.started).toHaveBeenCalledTimes(2);
+    expect(run.started).toHaveBeenCalledWith(sub);
+    expect(run.started).toHaveBeenCalledWith(root);
   });
 
   it("deduplicates shared ancestors", () => {
@@ -1137,11 +1410,11 @@ describe("enqueueAncestors", () => {
       { id: "package" },
     ]);
 
-    const run = { enqueued: vi.fn() };
-    enqueueAncestors(run as any, [pkgA as any, pkgB as any]);
+    const run = { started: vi.fn() };
+    startAncestors(run as any, [pkgA as any, pkgB as any]);
 
-    expect(run.enqueued).toHaveBeenCalledTimes(1);
-    expect(run.enqueued).toHaveBeenCalledWith(root);
+    expect(run.started).toHaveBeenCalledTimes(1);
+    expect(run.started).toHaveBeenCalledWith(root);
   });
 });
 
@@ -1414,5 +1687,86 @@ describe("applyResults records before resolving ancestors", () => {
     );
     // resolveAncestorsOf should have resolved dir:pkg because the pkg result was in the store
     expect(run.passed).toHaveBeenCalledWith(dir);
+  });
+});
+
+describe("skipUnresolved", () => {
+  it("marks descendants without results as skipped", () => {
+    const pkg = createItem("example.com/pkg", "pkg", undefined, [
+      { id: "package" },
+    ]);
+    const suite = createItem("example.com/pkg/SuiteA", "SuiteA", pkg);
+    const method1 = createItem("example.com/pkg/SuiteA/Test1", "Test1", suite);
+    const method2 = createItem("example.com/pkg/SuiteA/Test2", "Test2", suite);
+
+    const run = { skipped: vi.fn() };
+    const controller = {
+      getResult: vi.fn(() => undefined),
+    };
+
+    skipUnresolved(run as any, pkg as any, controller as any);
+
+    expect(run.skipped).toHaveBeenCalledTimes(3);
+    expect(run.skipped).toHaveBeenCalledWith(suite);
+    expect(run.skipped).toHaveBeenCalledWith(method1);
+    expect(run.skipped).toHaveBeenCalledWith(method2);
+  });
+
+  it("does not touch items that have results", () => {
+    const pkg = createItem("example.com/pkg", "pkg", undefined, [
+      { id: "package" },
+    ]);
+    const suite = createItem("example.com/pkg/SuiteA", "SuiteA", pkg);
+    const method1 = createItem("example.com/pkg/SuiteA/Test1", "Test1", suite);
+    const method2 = createItem("example.com/pkg/SuiteA/Test2", "Test2", suite);
+
+    const run = { skipped: vi.fn() };
+    const controller = {
+      getResult: vi.fn((id: string) => {
+        if (id === "example.com/pkg/SuiteA/Test1")
+          return { status: "pass" as const, duration: 100 };
+        return undefined;
+      }),
+    };
+
+    skipUnresolved(run as any, pkg as any, controller as any);
+
+    expect(run.skipped).toHaveBeenCalledTimes(2);
+    expect(run.skipped).toHaveBeenCalledWith(suite);
+    expect(run.skipped).toHaveBeenCalledWith(method2);
+    expect(run.skipped).not.toHaveBeenCalledWith(method1);
+  });
+
+  it("is a no-op for leaf items with no children", () => {
+    const method = createItem("example.com/pkg/SuiteA/Test1", "Test1");
+    const run = { skipped: vi.fn() };
+    const controller = { getResult: vi.fn(() => undefined) };
+
+    skipUnresolved(run as any, method as any, controller as any);
+
+    expect(run.skipped).not.toHaveBeenCalled();
+  });
+
+  it("recurses through dynamic subtests", () => {
+    const method = createItem("example.com/pkg/Suite/Test1", "Test1");
+    const dynamic1 = createItem(
+      "example.com/pkg/Suite/Test1/dynamic/sub1",
+      "sub1",
+      method,
+    );
+    const dynamic2 = createItem(
+      "example.com/pkg/Suite/Test1/dynamic/sub2",
+      "sub2",
+      method,
+    );
+
+    const run = { skipped: vi.fn() };
+    const controller = { getResult: vi.fn(() => undefined) };
+
+    skipUnresolved(run as any, method as any, controller as any);
+
+    expect(run.skipped).toHaveBeenCalledTimes(2);
+    expect(run.skipped).toHaveBeenCalledWith(dynamic1);
+    expect(run.skipped).toHaveBeenCalledWith(dynamic2);
   });
 });

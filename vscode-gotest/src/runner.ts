@@ -5,7 +5,8 @@ import { scopedConfig } from "./cli.js";
 import {
   collectItems,
   enqueueDescendants,
-  enqueueAncestors,
+  startAncestors,
+  skipUnresolved,
   groupByPackage,
   buildRunFilter,
   resolveAncestorItems,
@@ -91,7 +92,7 @@ export class TestRunner {
         run.started(item);
         enqueueDescendants(run, item);
       }
-      enqueueAncestors(run, items);
+      startAncestors(run, items);
 
       const groups = groupByPackage(items);
 
@@ -208,6 +209,9 @@ export class TestRunner {
       }
 
       resolveAncestorItems(run, this.controller);
+      for (const item of items) {
+        skipUnresolved(run, item, this.controller);
+      }
 
       if (anyCoverOnRun) {
         const { coverages: allCoverages } =
@@ -292,11 +296,6 @@ export class TestRunner {
       label: "runner",
       env,
       coverage: coverOnRun ? { store: this.coverageStore! } : undefined,
-      onResults: (applied) => {
-        for (const r of applied) {
-          this.controller.recordResult(r.itemId, r.status, r.duration);
-        }
-      },
     });
     this._lastJsonOutput += result.stdout;
   }
