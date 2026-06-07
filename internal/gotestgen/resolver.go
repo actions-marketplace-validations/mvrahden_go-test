@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"os"
 	"sort"
 	"strings"
 
@@ -687,6 +688,9 @@ func nonSerializable(t types.Type) string {
 		if r := nonSerializable(u.Key()); r != "" {
 			return r + " in map key"
 		}
+		if !isJSONMapKey(u.Key()) {
+			return "non-string/integer map key"
+		}
 		return nonSerializable(u.Elem())
 	case *types.Pointer:
 		return nonSerializable(u.Elem())
@@ -702,6 +706,14 @@ func nonSerializable(t types.Type) string {
 		}
 	}
 	return ""
+}
+
+func isJSONMapKey(t types.Type) bool {
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		return u.Info()&(types.IsString|types.IsInteger) != 0
+	}
+	return false
 }
 
 // topoSortSharedFixtures returns shared fixtures sorted in topological order
@@ -755,6 +767,17 @@ func topoSortSharedFixtures(seen map[string]*SharedFixtureInfo) []SharedFixtureI
 				sort.Strings(queue) // keep queue sorted for determinism
 			}
 		}
+	}
+
+	if len(result) < len(seen) {
+		// Collect cycle participants for error reporting
+		var cycled []string
+		for _, k := range keys {
+			if inDegree[k] > 0 {
+				cycled = append(cycled, k)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "WARN: cycle detected in shared fixtures: %v — these fixtures will be skipped\n", cycled)
 	}
 
 	return result

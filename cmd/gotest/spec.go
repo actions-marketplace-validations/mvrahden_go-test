@@ -58,6 +58,17 @@ func runSpec(inv Invocation) int {
 				coverProfile = v
 			}
 		}
+		if coverProfile == "" {
+			f, ferr := os.CreateTemp("", "gotest-cover-*.out")
+			if ferr != nil {
+				fmt.Fprintf(os.Stderr, "FAIL: %s\n", ferr)
+				return 2
+			}
+			coverProfile = f.Name()
+			f.Close()
+			defer os.Remove(coverProfile)
+			goTestArgs = append(goTestArgs, "-coverprofile="+coverProfile)
+		}
 	}
 
 	patterns := ExtractPackagePatterns(goTestArgs)

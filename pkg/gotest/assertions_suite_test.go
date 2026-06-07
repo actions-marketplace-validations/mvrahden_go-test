@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"sync/atomic"
 	"time"
@@ -734,6 +735,24 @@ func (s *AssertionsTestSuite) TestContains(t *gotest.T) {
 			gotest.True(it, m.Failed())
 		})
 	})
+
+	t.When("input is an unsupported type", func(w *gotest.T) {
+		w.It("fails with type error for int", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.Contains(r, 42, 2) })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "not a string, slice, array, or map")
+		})
+		w.It("fails with type error for struct", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.Contains(r, struct{ X int }{1}, 1) })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "not a string, slice, array, or map")
+		})
+		w.It("fails with type error for map with mismatched key type", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.Contains(r, map[string]int{"a": 1}, 42) })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "does not contain")
+		})
+	})
 }
 
 func (s *AssertionsTestSuite) TestNotContains(t *gotest.T) {
@@ -789,6 +808,18 @@ func (s *AssertionsTestSuite) TestNotContains(t *gotest.T) {
 		w.It("fails for present element", func(it *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.NotContains(r, [3]int{1, 2, 3}, 2) })
 			gotest.True(it, m.Failed())
+		})
+	})
+
+	t.When("input is an unsupported type", func(w *gotest.T) {
+		w.It("fails with type error for int", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.NotContains(r, 42, 2) })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "not a string, slice, array, or map")
+		})
+		w.It("passes without panic for map with mismatched key type", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.NotContains(r, map[string]int{"a": 1}, 42) })
+			gotest.False(it, m.Failed())
 		})
 	})
 }
@@ -1042,6 +1073,14 @@ func (s *AssertionsTestSuite) TestRegexp(t *gotest.T) {
 			gotest.True(it, m.Failed())
 		})
 	})
+
+	t.When("regexp is nil", func(w *gotest.T) {
+		w.It("fails with nil regexp error", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.Regexp(r, (*regexp.Regexp)(nil), "anything") })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "regexp is nil")
+		})
+	})
 }
 
 func (s *AssertionsTestSuite) TestInDelta(t *gotest.T) {
@@ -1062,6 +1101,14 @@ func (s *AssertionsTestSuite) TestInDelta(t *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, 5, 5, 0.0) })
 			gotest.False(it, m.Failed())
 		})
+		w.It("passes for unsigned ints where expected < actual", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, uint(3), uint(5), 3.0) })
+			gotest.False(it, m.Failed())
+		})
+		w.It("passes for int8 near boundary", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, int8(100), int8(-20), 121.0) })
+			gotest.False(it, m.Failed())
+		})
 	})
 
 	t.When("values exceed delta", func(w *gotest.T) {
@@ -1071,6 +1118,14 @@ func (s *AssertionsTestSuite) TestInDelta(t *gotest.T) {
 		})
 		w.It("fails for ints", func(it *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, 100, 105, 2.0) })
+			gotest.True(it, m.Failed())
+		})
+		w.It("fails for int8 overflow that would mask delta", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, int8(100), int8(-50), 110) })
+			gotest.True(it, m.Failed())
+		})
+		w.It("fails for unsigned ints where expected < actual", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, uint(0), uint(5), 3.0) })
 			gotest.True(it, m.Failed())
 		})
 	})
@@ -1085,6 +1140,21 @@ func (s *AssertionsTestSuite) TestInDelta(t *gotest.T) {
 	t.When("delta is zero", func(w *gotest.T) {
 		w.It("fails for unequal values", func(it *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, 5, 6, 0.0) })
+			gotest.True(it, m.Failed())
+		})
+	})
+
+	t.When("values are NaN", func(w *gotest.T) {
+		w.It("fails when expected is NaN", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, math.NaN(), 1.0, 100.0) })
+			gotest.True(it, m.Failed())
+		})
+		w.It("fails when actual is NaN", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, 1.0, math.NaN(), 100.0) })
+			gotest.True(it, m.Failed())
+		})
+		w.It("fails when both are NaN", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.InDelta(r, math.NaN(), math.NaN(), 100.0) })
 			gotest.True(it, m.Failed())
 		})
 	})
