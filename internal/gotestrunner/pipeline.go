@@ -78,9 +78,8 @@ func buildBaseEnv(cfg PipelineConfig) []string {
 	return env
 }
 
-func prepareTestRun(ctx context.Context, overlay *OverlayResult, buildFlags []string, setupTimeout time.Duration) ([]CompileResult, *SharedFixtureProcess, error) {
+func prepareTestRun(ctx context.Context, overlay *OverlayResult, buildFlags []string, setupTimeout time.Duration) ([]CompileResult, *SharedFixtureProcess, context.CancelFunc, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	var compiled []CompileResult
 	var compileErr error
@@ -116,16 +115,17 @@ func prepareTestRun(ctx context.Context, overlay *OverlayResult, buildFlags []st
 	wg.Wait()
 
 	if compileErr != nil || setupErr != nil {
+		cancel()
 		if setupProc != nil {
 			setupProc.Teardown()
 		}
 		if compileErr != nil {
-			return nil, nil, compileErr
+			return nil, nil, nil, compileErr
 		}
-		return nil, nil, fmt.Errorf("shared fixture setup: %w", setupErr)
+		return nil, nil, nil, fmt.Errorf("shared fixture setup: %w", setupErr)
 	}
 
-	return compiled, setupProc, nil
+	return compiled, setupProc, cancel, nil
 }
 
 func assignBudgetFiles(targets []SuiteTarget) {
@@ -165,10 +165,11 @@ func setupCoverage(targets []SuiteTarget, overlay *OverlayResult, userCoverProfi
 }
 
 func runBatch(ctx context.Context, cfg PipelineConfig, overlay *OverlayResult, pf ParsedFlags) (PipelineResult, error) {
-	compiled, setupProc, err := prepareTestRun(ctx, overlay, pf.BuildFlags, cfg.SetupTimeout)
+	compiled, setupProc, cancelPrepare, err := prepareTestRun(ctx, overlay, pf.BuildFlags, cfg.SetupTimeout)
 	if err != nil {
 		return PipelineResult{ExitCode: 2}, err
 	}
+	defer cancelPrepare()
 	if setupProc != nil {
 		defer setupProc.Teardown()
 	}

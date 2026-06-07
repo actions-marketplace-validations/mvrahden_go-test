@@ -433,7 +433,7 @@ func runBeforeAllWithRetry(ctx context.Context, node *FixtureNode) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "FAIL: %s.BeforeAll failed after %d attempt(s): %v\n", node.Name, attempts, lastErr)
-	return fmt.Errorf("%s.BeforeAll: %w", node.Name, lastErr)
+	return wrapErr(lastErr)
 }
 
 func teardownRoots(roots []*FixtureNode, tracker *nodeTracker) bool {
