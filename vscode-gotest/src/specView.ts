@@ -720,7 +720,9 @@ function fmtTime(seconds: number): string {
   return seconds > 0 ? seconds.toFixed(3) + "s" : "-";
 }
 
-type ReportRow = { label: string; time: string; result: string };
+type ReportRow =
+  | { label: string; time: string; result: string }
+  | { raw: string };
 
 export function specDataToReport(
   data: SpecData,
@@ -784,15 +786,22 @@ export function specDataToReport(
     }
   }
 
-  const maxLabelLen = Math.max(8, ...rows.map((r) => r.label.length));
+  const maxLabelLen = Math.max(
+    8,
+    ...rows.map((r) => ("label" in r ? r.label.length : 0)),
+  );
   const header = `${"Behavior".padEnd(maxLabelLen)}  Time       Result`;
   const separator = "-".repeat(header.length);
 
   const lines = [header, separator];
   for (const row of rows) {
-    lines.push(
-      `${row.label.padEnd(maxLabelLen)}  ${row.time.padEnd(9)}  ${row.result}`,
-    );
+    if ("raw" in row) {
+      lines.push(row.raw);
+    } else {
+      lines.push(
+        `${row.label.padEnd(maxLabelLen)}  ${row.time.padEnd(9)}  ${row.result}`,
+      );
+    }
   }
   lines.push(separator);
 
@@ -839,6 +848,15 @@ function walkReportNode(
       time: fmtTime(node.duration),
       result: node.status,
     });
+    if (node.status === "fail" && node.output.length > 0) {
+      const prefix = "  ".repeat(indent + 1) + "│ ";
+      const filtered = node.output
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("=== ") && !l.startsWith("--- "));
+      for (const line of filtered) {
+        rows.push({ raw: prefix + line });
+      }
+    }
     return;
   }
 

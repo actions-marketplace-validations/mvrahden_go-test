@@ -18,6 +18,7 @@ function leaf(
   name: string,
   status: string,
   duration = 0,
+  output: string[] = [],
 ): {
   name: string;
   display: string;
@@ -39,7 +40,7 @@ function leaf(
     focused: false,
     excluded: false,
     external: false,
-    output: [],
+    output,
     children: [],
   };
 }
@@ -171,5 +172,130 @@ describe("specDataToReport", () => {
     const report = specDataToReport(data, [], new Set(["pass"]));
     expect(report).toContain("1 suites");
     expect(report).toContain("3 behaviors");
+  });
+
+  it("includes error output for failed leaves", () => {
+    const dataWithOutput = {
+      packages: [
+        {
+          path: "example.com/pkg",
+          status: "fail",
+          duration: 1.0,
+          nodes: [
+            suite("MySuite", [
+              leaf("passes", "pass", 0.2),
+              leaf("fails", "fail", 0.8, [
+                "    file_test.go:42: Expected 1 to equal 2\n",
+              ]),
+            ]),
+          ],
+        },
+      ],
+      stats: {
+        suites: 1,
+        behaviors: 2,
+        tests: 0,
+        passed: 1,
+        failed: 1,
+        skipped: 0,
+      },
+    };
+    const report = specDataToReport(dataWithOutput, []);
+    expect(report).toContain("│ file_test.go:42: Expected 1 to equal 2");
+  });
+
+  it("filters === and --- delimiters from error output", () => {
+    const dataWithOutput = {
+      packages: [
+        {
+          path: "example.com/pkg",
+          status: "fail",
+          duration: 0.5,
+          nodes: [
+            suite("S", [
+              leaf("fails", "fail", 0.5, [
+                "=== RUN   TestFoo\n",
+                "--- FAIL: TestFoo (0.00s)\n",
+                "    foo_test.go:10: oops\n",
+              ]),
+            ]),
+          ],
+        },
+      ],
+      stats: {
+        suites: 1,
+        behaviors: 1,
+        tests: 0,
+        passed: 0,
+        failed: 1,
+        skipped: 0,
+      },
+    };
+    const report = specDataToReport(dataWithOutput, []);
+    expect(report).toContain("│ foo_test.go:10: oops");
+    expect(report).not.toContain("=== RUN");
+    expect(report).not.toContain("--- FAIL");
+  });
+
+  it("does not include error output when fail is hidden", () => {
+    const dataWithOutput = {
+      packages: [
+        {
+          path: "example.com/pkg",
+          status: "fail",
+          duration: 1.0,
+          nodes: [
+            suite("MySuite", [
+              leaf("passes", "pass", 0.2),
+              leaf("fails", "fail", 0.8, [
+                "    file_test.go:42: Expected 1 to equal 2\n",
+              ]),
+            ]),
+          ],
+        },
+      ],
+      stats: {
+        suites: 1,
+        behaviors: 2,
+        tests: 0,
+        passed: 1,
+        failed: 1,
+        skipped: 0,
+      },
+    };
+    const report = specDataToReport(dataWithOutput, [], new Set(["fail"]));
+    expect(report).not.toContain("file_test.go:42");
+    expect(report).not.toContain("Expected 1 to equal 2");
+  });
+
+  it("error output does not inflate column widths", () => {
+    const longError = "x".repeat(200);
+    const dataWithOutput = {
+      packages: [
+        {
+          path: "example.com/pkg",
+          status: "fail",
+          duration: 0.5,
+          nodes: [
+            suite("S", [
+              leaf("fails", "fail", 0.5, [
+                `    file_test.go:1: ${longError}\n`,
+              ]),
+            ]),
+          ],
+        },
+      ],
+      stats: {
+        suites: 1,
+        behaviors: 1,
+        tests: 0,
+        passed: 0,
+        failed: 1,
+        skipped: 0,
+      },
+    };
+    const report = specDataToReport(dataWithOutput, []);
+    const headerLine = report.split("\n")[0];
+    expect(headerLine.length).toBeLessThan(100);
   });
 });
