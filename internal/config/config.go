@@ -20,7 +20,8 @@ type ProjectConfig struct {
 	// SetupTimeout is the total budget for all shared fixture setup.
 	// When omitted, each fixture's own SharedFixtureConfig().Timeout governs.
 	SetupTimeout Duration `yaml:"setup-timeout"`
-	// Timeout is the global pipeline deadline. Zero means no limit.
+	// Timeout is the global pipeline deadline.
+	// When omitted, the CLI default (15m) applies. Use 0 on the CLI flag to disable.
 	Timeout Duration `yaml:"timeout"`
 	// MinCoverage is the minimum coverage percentage (0-100). The run fails if coverage is below.
 	MinCoverage int `yaml:"min-coverage"`
