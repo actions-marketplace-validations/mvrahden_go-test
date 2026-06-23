@@ -192,10 +192,14 @@ func main() {
 		if ƒcfg_sf1.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-			sf1.AfterAll(ctx)
+			if err := sf1.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf1.AfterAll(ctx)
+			if err := sf1.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 	if ƒerrs[0] == nil {
@@ -203,10 +207,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -340,10 +348,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -462,10 +474,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "SetupFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "SetupFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -597,10 +613,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -798,10 +818,14 @@ func main() {
 		if ƒcfg_sf1.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-			sf1.AfterAll(ctx)
+			if err := sf1.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf1.AfterAll(ctx)
+			if err := sf1.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 	if ƒerrs[0] == nil {
@@ -809,10 +833,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -944,10 +972,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -1079,10 +1111,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -1214,10 +1250,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -1349,10 +1389,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -1551,10 +1595,14 @@ func main() {
 		if ƒcfg_sf1.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-			sf1.AfterAll(ctx)
+			if err := sf1.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf1.AfterAll(ctx)
+			if err := sf1.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 	if ƒerrs[0] == nil {
@@ -1562,10 +1610,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -1697,10 +1749,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -1833,10 +1889,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -2037,10 +2097,14 @@ func main() {
 		if ƒcfg_sf1.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-			sf1.AfterAll(ctx)
+			if err := sf1.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "GCSFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf1.AfterAll(ctx)
+			if err := sf1.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "GCSFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 	if ƒerrs[0] == nil {
@@ -2048,10 +2112,14 @@ func main() {
 		if ƒcfg_sf0.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			sf0.AfterAll(ctx)
+			if err := sf0.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 }

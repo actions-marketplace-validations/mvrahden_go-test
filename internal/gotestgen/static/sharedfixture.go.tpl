@@ -150,10 +150,14 @@ func main() {
 		if ƒcfg_{{ .VarName }}.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, ƒcfg_{{ .VarName }}.Timeout)
-			{{ .VarName }}.AfterAll(ctx)
+			if err := {{ .VarName }}.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "{{ .Identifier }}.AfterAll failed: %v\n", err)
+			}
 			cancel()
 		} else {
-			{{ .VarName }}.AfterAll(ctx)
+			if err := {{ .VarName }}.AfterAll(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "{{ .Identifier }}.AfterAll failed: %v\n", err)
+			}
 		}
 	}
 {{- end }}
