@@ -36,6 +36,12 @@ func runSpec(inv Invocation) int {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
 	}
+	globalTimeout, err := parseGlobalTimeoutFlag(ownArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
+	globalTimeout = resolveGlobalTimeout(globalTimeout)
 	minCoverage, err := parseMinFlag(ownArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
@@ -77,6 +83,7 @@ func runSpec(inv Invocation) int {
 		GoTestArgs:      goTestArgs,
 		PackagePatterns: patterns,
 		SetupTimeout:    setupTimeout,
+		GlobalTimeout:   globalTimeout,
 		Debug:           slices.Contains(ownArgs, "--debug"),
 		CI:              slices.Contains(ownArgs, "--ci"),
 		UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
@@ -111,6 +118,12 @@ func runSpec(inv Invocation) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals...)
 	defer cancel()
 
+	if cfg.GlobalTimeout > 0 {
+		var timeoutCancel context.CancelFunc
+		ctx, timeoutCancel = context.WithTimeout(ctx, cfg.GlobalTimeout)
+		defer timeoutCancel()
+	}
+
 	result, err := gotestrunner.RunPipeline(ctx, gotestrunner.PipelineConfig{
 		GoTestArgs:      cfg.GoTestArgs,
 		SetupTimeout:    cfg.SetupTimeout,
@@ -126,6 +139,12 @@ func runSpec(inv Invocation) int {
 	}
 
 	code := result.ExitCode
+	if cfg.GlobalTimeout > 0 && ctx.Err() == context.DeadlineExceeded {
+		fmt.Fprintf(os.Stderr, "FAIL: global --timeout exceeded after %v\n", cfg.GlobalTimeout)
+		if code == 0 {
+			code = 1
+		}
+	}
 
 	events, err := gotestspec.ParseEvents(bytes.NewReader(result.CapturedJSON))
 	if err != nil {

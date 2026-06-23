@@ -20,6 +20,8 @@ type ProjectConfig struct {
 	// SetupTimeout is the total budget for all shared fixture setup.
 	// When omitted, each fixture's own SharedFixtureConfig().Timeout governs.
 	SetupTimeout Duration `yaml:"setup-timeout"`
+	// Timeout is the global pipeline deadline. Zero means no limit.
+	Timeout Duration `yaml:"timeout"`
 	// MinCoverage is the minimum coverage percentage (0-100). The run fails if coverage is below.
 	MinCoverage int `yaml:"min-coverage"`
 	// Parallel is the total concurrency budget (concurrent test methods across all

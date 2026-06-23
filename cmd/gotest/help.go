@@ -85,6 +85,7 @@ Flags (gotest — use --double-dash):
   --no-cache              Disable overlay cache, force fresh generation
   --min=<pct>             Fail if coverage < pct%% (0-100)
   --setup-timeout=<dur>   Total budget for shared fixture setup (default: 2m, 0 to disable)
+  --timeout=<dur>         Global pipeline deadline (default: 15m, 0 to disable)
 
 Flags (go test — use -single-dash, forwarded automatically):
   -v                      Verbose output
@@ -135,6 +136,7 @@ Flags:
   --no-cache              Disable overlay cache, force fresh generation
   --min=<pct>             Fail if coverage < pct% (0-100, enables -coverprofile)
   --setup-timeout=<dur>   Total budget for shared fixture setup (default: 2m, 0 to disable)
+  --timeout=<dur>         Global pipeline deadline (default: 15m, 0 to disable)
 
 All standard go test flags (-single-dash) are forwarded automatically.
 Use a bare "--" to pass unrecognized flags without validation.
@@ -172,6 +174,7 @@ Flags:
   --no-cache              Disable overlay cache, force fresh generation
   --min=<pct>             Fail if coverage < pct% (0-100)
   --setup-timeout=<dur>   Total budget for shared fixture setup (default: 2m, 0 to disable)
+  --timeout=<dur>         Global pipeline deadline (default: 15m, 0 to disable)
 
 Examples:
   gotest spec ./...                                Run and render spec
@@ -199,6 +202,7 @@ Flags:
   --update-snapshots      Regenerate snapshot files
   --no-cache              Disable overlay cache, force fresh generation
   --setup-timeout=<dur>   Total budget for shared fixture setup (default: 2m, 0 to disable)
+  --timeout=<dur>         Global pipeline deadline (default: 15m, 0 to disable)
 
 Examples:
   gotest watch ./...                         Watch all packages
@@ -398,6 +402,7 @@ at a go.mod boundary. CLI flags override config values.
 Fields:
   tags: <string>            Build tags, comma-separated (e.g., "integration,e2e")
   setup-timeout: <duration> Total budget for all shared fixture setup (default: 2m, 0 to disable)
+  timeout: <duration>       Global pipeline deadline (default: 15m, 0 to disable)
   min-coverage: <int>       Minimum coverage percentage, 0-100
   debounce: <duration>      Watch mode re-run delay (e.g., "500ms", default: 200ms)
   lint:

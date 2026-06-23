@@ -101,6 +101,12 @@ func runTest(inv Invocation) int {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
 	}
+	globalTimeout, err := parseGlobalTimeoutFlag(ownArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
+	globalTimeout = resolveGlobalTimeout(globalTimeout)
 	parallel, err := parseParallelFlag(ownArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
@@ -135,6 +141,7 @@ func runTest(inv Invocation) int {
 		GoTestArgs:      goTestArgs,
 		PackagePatterns: patterns,
 		SetupTimeout:    setupTimeout,
+		GlobalTimeout:   globalTimeout,
 		Debug:           slices.Contains(ownArgs, "--debug"),
 		CI:              slices.Contains(ownArgs, "--ci"),
 		JSON:            jsonMode,
@@ -235,6 +242,41 @@ func readCoverageTotal(profilePath string) (float64, error) {
 	}
 	pctStr := strings.TrimSuffix(fields[len(fields)-1], "%")
 	return strconv.ParseFloat(pctStr, 64)
+}
+
+const DefaultGlobalTimeout = 15 * time.Minute
+
+func resolveGlobalTimeout(d time.Duration) time.Duration {
+	switch {
+	case d > 0:
+		return d
+	case d < 0:
+		return 0
+	default:
+		return DefaultGlobalTimeout
+	}
+}
+
+func parseGlobalTimeoutFlag(args []string) (time.Duration, error) {
+	for i, arg := range args {
+		var raw string
+		if v, ok := strings.CutPrefix(arg, "--timeout="); ok {
+			raw = v
+		} else if arg == "--timeout" && i+1 < len(args) {
+			raw = args[i+1]
+		} else {
+			continue
+		}
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return 0, fmt.Errorf("invalid --timeout value %q: %w", raw, err)
+		}
+		if d <= 0 {
+			return -1, nil
+		}
+		return d, nil
+	}
+	return 0, nil
 }
 
 func stripJSONFlag(args []string) (bool, []string) {

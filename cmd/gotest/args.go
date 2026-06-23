@@ -33,6 +33,9 @@ func (inv Invocation) DefaultArgs() []string {
 	if inv.Config.SetupTimeout.Duration() != 0 && !hasFlag(out, "--setup-timeout") {
 		out = append([]string{"--setup-timeout=" + inv.Config.SetupTimeout.Duration().String()}, out...)
 	}
+	if inv.Config.Timeout.Duration() != 0 && !hasFlag(out, "--timeout") {
+		out = append([]string{"--timeout=" + inv.Config.Timeout.Duration().String()}, out...)
+	}
 	return out
 }
 
@@ -49,6 +52,7 @@ type ExecConfig struct {
 	GoTestArgs      []string
 	PackagePatterns []string
 	SetupTimeout    time.Duration
+	GlobalTimeout   time.Duration
 	Debug           bool
 	CI              bool
 	JSON            bool
