@@ -272,6 +272,10 @@ func runStreaming(ctx context.Context, cfg PipelineConfig, overlay *OverlayResul
 			}
 			select {
 			case <-setupProc.AllDone():
+				if err := setupProc.SetupErr(); err != nil {
+					fmt.Fprintf(os.Stderr, "FAIL: shared fixture setup failed: %v\n", err)
+					streamCancel()
+				}
 			case <-streamCtx.Done():
 			case <-setupDeadline:
 				fmt.Fprintf(os.Stderr, "FAIL: shared fixture setup timed out after %v\n", resolvedSetupTimeout)
