@@ -41,7 +41,7 @@ func (s *CmdGotestTestSuite) TestDefaultArgs(t *gotest.T) {
 				Desc: "config positive: config prepended",
 				inv: Invocation{
 					Args:   []string{"-v"},
-					Config: config.ProjectConfig{SetupTimeout: config.Duration(2 * time.Minute)},
+					Config: config.ProjectConfig{SetupTimeout: config.Dur(2 * time.Minute)},
 				},
 				expect: []string{"--setup-timeout=2m0s", "-v"},
 			},
@@ -49,7 +49,7 @@ func (s *CmdGotestTestSuite) TestDefaultArgs(t *gotest.T) {
 				Desc: "config negative: config prepended",
 				inv: Invocation{
 					Args:   []string{"-v"},
-					Config: config.ProjectConfig{SetupTimeout: config.Duration(-1 * time.Second)},
+					Config: config.ProjectConfig{SetupTimeout: config.Dur(-1 * time.Second)},
 				},
 				expect: []string{"--setup-timeout=-1s", "-v"},
 			},
@@ -57,9 +57,33 @@ func (s *CmdGotestTestSuite) TestDefaultArgs(t *gotest.T) {
 				Desc: "tags and setup-timeout both prepended",
 				inv: Invocation{
 					Args:   []string{"-v"},
-					Config: config.ProjectConfig{Tags: "integration", SetupTimeout: config.Duration(3 * time.Minute)},
+					Config: config.ProjectConfig{Tags: "integration", SetupTimeout: config.Dur(3 * time.Minute)},
 				},
 				expect: []string{"--setup-timeout=3m0s", "-tags=integration", "-v"},
+			},
+			{
+				Desc: "config timeout prepended",
+				inv: Invocation{
+					Args:   []string{"-v"},
+					Config: config.ProjectConfig{Timeout: config.Dur(15 * time.Minute)},
+				},
+				expect: []string{"--timeout=15m0s", "-v"},
+			},
+			{
+				Desc: "config timeout zero: disables default",
+				inv: Invocation{
+					Args:   []string{"-v"},
+					Config: config.ProjectConfig{Timeout: config.Dur(0)},
+				},
+				expect: []string{"--timeout=0s", "-v"},
+			},
+			{
+				Desc: "config timeout negative: opt-out prepended",
+				inv: Invocation{
+					Args:   []string{"-v"},
+					Config: config.ProjectConfig{Timeout: config.Dur(-1 * time.Second)},
+				},
+				expect: []string{"--timeout=-1s", "-v"},
 			},
 		}) {
 			got := tc.inv.DefaultArgs()
@@ -84,7 +108,7 @@ func (s *CmdGotestTestSuite) TestDefaultArgs(t *gotest.T) {
 				Desc: "config positive: CLI wins",
 				inv: Invocation{
 					Args:   []string{"--setup-timeout=5m", "-v"},
-					Config: config.ProjectConfig{SetupTimeout: config.Duration(2 * time.Minute)},
+					Config: config.ProjectConfig{SetupTimeout: config.Dur(2 * time.Minute)},
 				},
 				expect: []string{"--setup-timeout=5m", "-v"},
 			},
@@ -92,9 +116,17 @@ func (s *CmdGotestTestSuite) TestDefaultArgs(t *gotest.T) {
 				Desc: "config negative: CLI wins",
 				inv: Invocation{
 					Args:   []string{"--setup-timeout=5m", "-v"},
-					Config: config.ProjectConfig{SetupTimeout: config.Duration(-1 * time.Second)},
+					Config: config.ProjectConfig{SetupTimeout: config.Dur(-1 * time.Second)},
 				},
 				expect: []string{"--setup-timeout=5m", "-v"},
+			},
+			{
+				Desc: "CLI timeout wins over config timeout",
+				inv: Invocation{
+					Args:   []string{"--timeout=20m", "-v"},
+					Config: config.ProjectConfig{Timeout: config.Dur(15 * time.Minute)},
+				},
+				expect: []string{"--timeout=20m", "-v"},
 			},
 		}) {
 			got := tc.inv.DefaultArgs()
@@ -119,7 +151,7 @@ func (s *CmdGotestTestSuite) TestDefaultArgs(t *gotest.T) {
 				Desc: "config positive: CLI wins",
 				inv: Invocation{
 					Args:   []string{"--setup-timeout=-1s", "-v"},
-					Config: config.ProjectConfig{SetupTimeout: config.Duration(2 * time.Minute)},
+					Config: config.ProjectConfig{SetupTimeout: config.Dur(2 * time.Minute)},
 				},
 				expect: []string{"--setup-timeout=-1s", "-v"},
 			},
@@ -127,7 +159,7 @@ func (s *CmdGotestTestSuite) TestDefaultArgs(t *gotest.T) {
 				Desc: "config negative: CLI wins",
 				inv: Invocation{
 					Args:   []string{"--setup-timeout=-1s", "-v"},
-					Config: config.ProjectConfig{SetupTimeout: config.Duration(-1 * time.Second)},
+					Config: config.ProjectConfig{SetupTimeout: config.Dur(-1 * time.Second)},
 				},
 				expect: []string{"--setup-timeout=-1s", "-v"},
 			},
@@ -167,6 +199,8 @@ func (s *CmdGotestTestSuite) TestSplitArgs(t *gotest.T) {
 		{Desc: "watch: json flag", inArgs: []string{"-json", "./pkg/..."}, allowed: ExportWatchAllowed, expectOwn: nil, expectGoTest: []string{"-json", "./pkg/..."}},
 		{Desc: "watch: debounce with json", inArgs: []string{"--debounce=500ms", "-json", "./..."}, allowed: ExportWatchAllowed, expectOwn: []string{"--debounce=500ms"}, expectGoTest: []string{"-json", "./..."}},
 		{Desc: "watch: debug and ci", inArgs: []string{"--debug", "--ci", "-v", "./..."}, allowed: ExportWatchAllowed, expectOwn: []string{"--debug", "--ci"}, expectGoTest: []string{"-v", "./..."}},
+		{Desc: "timeout flag with equals", inArgs: []string{"--timeout=15m", "-v"}, allowed: ExportTestAllowed, expectOwn: []string{"--timeout=15m"}, expectGoTest: []string{"-v"}},
+		{Desc: "timeout flag with space", inArgs: []string{"--timeout", "15m", "-v"}, allowed: ExportTestAllowed, expectOwn: []string{"--timeout", "15m"}, expectGoTest: []string{"-v"}},
 	}) {
 		own, goTest, err := SplitArgs(tc.inArgs, tc.allowed)
 		if tc.expectErr {
@@ -295,6 +329,117 @@ func (s *CmdGotestTestSuite) TestParseParallelFlag(t *gotest.T) {
 			gotest.Equal(sub, tc.expect, got)
 		}
 	}
+}
+
+func (s *CmdGotestTestSuite) TestParseSetupTimeoutFlag(t *gotest.T) {
+	for sub, tc := range gotest.Each(t, []struct {
+		Desc      string
+		args      []string
+		expect    time.Duration
+		expectErr bool
+	}{
+		{Desc: "no flag", args: []string{"--debug"}, expect: 0},
+		{Desc: "equals syntax", args: []string{"--setup-timeout=2m"}, expect: 2 * time.Minute},
+		{Desc: "space syntax", args: []string{"--setup-timeout", "30s"}, expect: 30 * time.Second},
+		{Desc: "empty args", args: nil, expect: 0},
+		{Desc: "invalid value", args: []string{"--setup-timeout=abc"}, expectErr: true},
+		{Desc: "zero value", args: []string{"--setup-timeout=0"}, expect: -1},
+		{Desc: "negative value", args: []string{"--setup-timeout=-5s"}, expect: -1},
+		{Desc: "small positive", args: []string{"--setup-timeout=500ms"}, expect: 500 * time.Millisecond},
+	}) {
+		got, err := ExportParseSetupTimeoutFlag(tc.args)
+		if tc.expectErr {
+			gotest.True(sub, err != nil, "expected error")
+		} else {
+			gotest.NoError(sub, err)
+			gotest.Equal(sub, tc.expect, got)
+		}
+	}
+}
+
+func (s *CmdGotestTestSuite) TestParseDebounceFlag(t *gotest.T) {
+	for sub, tc := range gotest.Each(t, []struct {
+		Desc      string
+		args      []string
+		expect    time.Duration
+		expectErr bool
+	}{
+		{Desc: "no flag: default 200ms", args: []string{"--debug"}, expect: 200 * time.Millisecond},
+		{Desc: "equals syntax", args: []string{"--debounce=500ms"}, expect: 500 * time.Millisecond},
+		{Desc: "space syntax", args: []string{"--debounce", "1s"}, expect: 1 * time.Second},
+		{Desc: "empty args: default 200ms", args: nil, expect: 200 * time.Millisecond},
+		{Desc: "invalid value", args: []string{"--debounce=abc"}, expectErr: true},
+		{Desc: "zero value", args: []string{"--debounce=0"}, expectErr: true},
+		{Desc: "negative value", args: []string{"--debounce=-1s"}, expectErr: true},
+	}) {
+		got, err := ExportParseDebounceFlag(tc.args)
+		if tc.expectErr {
+			gotest.True(sub, err != nil, "expected error")
+		} else {
+			gotest.NoError(sub, err)
+			gotest.Equal(sub, tc.expect, got)
+		}
+	}
+}
+
+func (s *CmdGotestTestSuite) TestParseGlobalTimeoutFlag(t *gotest.T) {
+	for sub, tc := range gotest.Each(t, []struct {
+		Desc      string
+		args      []string
+		expect    time.Duration
+		expectErr bool
+	}{
+		{Desc: "no flag", args: []string{"--debug"}, expect: 0},
+		{Desc: "equals syntax", args: []string{"--timeout=15m"}, expect: 15 * time.Minute},
+		{Desc: "space syntax", args: []string{"--timeout", "30s"}, expect: 30 * time.Second},
+		{Desc: "empty args", args: nil, expect: 0},
+		{Desc: "invalid value", args: []string{"--timeout=abc"}, expectErr: true},
+		{Desc: "zero value", args: []string{"--timeout=0"}, expect: -1},
+		{Desc: "negative value", args: []string{"--timeout=-5s"}, expect: -1},
+		{Desc: "small positive", args: []string{"--timeout=100ms"}, expect: 100 * time.Millisecond},
+	}) {
+		got, err := ExportParseGlobalTimeoutFlag(tc.args)
+		if tc.expectErr {
+			gotest.True(sub, err != nil, "expected error")
+		} else {
+			gotest.NoError(sub, err)
+			gotest.Equal(sub, tc.expect, got)
+		}
+	}
+}
+
+func (s *CmdGotestTestSuite) TestResolveGlobalTimeout(t *gotest.T) {
+	for sub, tc := range gotest.Each(t, []struct {
+		Desc   string
+		input  time.Duration
+		expect time.Duration
+	}{
+		{Desc: "not set: default 15m", input: 0, expect: 15 * time.Minute},
+		{Desc: "positive: passthrough", input: 20 * time.Minute, expect: 20 * time.Minute},
+		{Desc: "negative sentinel: no limit", input: -1, expect: 0},
+		{Desc: "large negative: no limit", input: -100 * time.Minute, expect: 0},
+		{Desc: "small positive: passthrough", input: 30 * time.Second, expect: 30 * time.Second},
+	}) {
+		gotest.Equal(sub, tc.expect, ExportResolveGlobalTimeout(tc.input))
+	}
+
+	t.When("end-to-end parse+resolve", func(w *gotest.T) {
+		for sub, tc := range gotest.Each(w, []struct {
+			Desc   string
+			args   []string
+			expect time.Duration
+		}{
+			{Desc: "--timeout=0 disables", args: []string{"--timeout=0"}, expect: 0},
+			{Desc: "--timeout=0s disables", args: []string{"--timeout=0s"}, expect: 0},
+			{Desc: "--timeout=-1s disables", args: []string{"--timeout=-1s"}, expect: 0},
+			{Desc: "absent defaults to 15m", args: []string{"-v"}, expect: 15 * time.Minute},
+			{Desc: "--timeout=20m passes through", args: []string{"--timeout=20m"}, expect: 20 * time.Minute},
+		}) {
+			parsed, err := ExportParseGlobalTimeoutFlag(tc.args)
+			gotest.NoError(sub, err)
+			gotest.Equal(sub, tc.expect, ExportResolveGlobalTimeout(parsed))
+		}
+	})
 }
 
 func (s *CmdGotestTestSuite) TestRunDiscover_SimpleSuite(t *gotest.T) {

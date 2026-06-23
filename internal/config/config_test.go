@@ -13,6 +13,7 @@ func TestLoad_FullConfig(t *testing.T) {
 	writeFile(t, dir, FileName, `
 tags: "integration,e2e"
 setup-timeout: 2m
+timeout: 20m
 min-coverage: 80
 parallel: 12
 debounce: 500ms
@@ -28,10 +29,11 @@ lint:
 	}
 
 	assertEqual(t, "tags", cfg.Tags, "integration,e2e")
-	assertEqual(t, "setup-timeout", cfg.SetupTimeout.Duration(), 2*time.Minute)
+	assertDuration(t, "setup-timeout", cfg.SetupTimeout, 2*time.Minute)
+	assertDuration(t, "timeout", cfg.Timeout, 20*time.Minute)
 	assertEqual(t, "min-coverage", cfg.MinCoverage, 80)
 	assertEqual(t, "parallel", cfg.Parallel, 12)
-	assertEqual(t, "debounce", cfg.Debounce.Duration(), 500*time.Millisecond)
+	assertDuration(t, "debounce", cfg.Debounce, 500*time.Millisecond)
 	assertSliceEqual(t, "lint.skip", cfg.Lint.Skip, []string{"stdlib-test", "testify"})
 }
 
@@ -45,10 +47,11 @@ func TestLoad_NoFile_ReturnsZero(t *testing.T) {
 	}
 
 	assertEqual(t, "tags", cfg.Tags, "")
-	assertEqual(t, "setup-timeout", cfg.SetupTimeout.Duration(), time.Duration(0))
+	assertNilDuration(t, "setup-timeout", cfg.SetupTimeout)
+	assertNilDuration(t, "timeout", cfg.Timeout)
 	assertEqual(t, "min-coverage", cfg.MinCoverage, 0)
 	assertEqual(t, "parallel", cfg.Parallel, 0)
-	assertEqual(t, "debounce", cfg.Debounce.Duration(), time.Duration(0))
+	assertNilDuration(t, "debounce", cfg.Debounce)
 	if len(cfg.Lint.Skip) != 0 {
 		t.Errorf("lint.skip: got %v, want empty", cfg.Lint.Skip)
 	}
@@ -69,8 +72,8 @@ min-coverage: 60
 
 	assertEqual(t, "tags", cfg.Tags, "unit")
 	assertEqual(t, "min-coverage", cfg.MinCoverage, 60)
-	assertEqual(t, "setup-timeout", cfg.SetupTimeout.Duration(), time.Duration(0))
-	assertEqual(t, "debounce", cfg.Debounce.Duration(), time.Duration(0))
+	assertNilDuration(t, "setup-timeout", cfg.SetupTimeout)
+	assertNilDuration(t, "debounce", cfg.Debounce)
 }
 
 func TestLoad_WalksUpToGoMod(t *testing.T) {
@@ -109,6 +112,25 @@ func TestLoad_StopsAtGoMod(t *testing.T) {
 	assertEqual(t, "tags", cfg.Tags, "")
 }
 
+func TestLoad_ZeroDuration_IsNotNil(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module test\n")
+	writeFile(t, dir, FileName, `
+setup-timeout: 0s
+timeout: 0s
+debounce: 0s
+`)
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertDuration(t, "setup-timeout", cfg.SetupTimeout, 0)
+	assertDuration(t, "timeout", cfg.Timeout, 0)
+	assertDuration(t, "debounce", cfg.Debounce, 0)
+}
+
 func TestLoad_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "go.mod", "module test\n")
@@ -142,6 +164,24 @@ func assertEqual[T comparable](t *testing.T, field string, got, want T) {
 	t.Helper()
 	if got != want {
 		t.Errorf("%s: got %v, want %v", field, got, want)
+	}
+}
+
+func assertDuration(t *testing.T, field string, got *Duration, want time.Duration) {
+	t.Helper()
+	if got == nil {
+		t.Errorf("%s: got nil, want %v", field, want)
+		return
+	}
+	if got.Duration() != want {
+		t.Errorf("%s: got %v, want %v", field, got.Duration(), want)
+	}
+}
+
+func assertNilDuration(t *testing.T, field string, got *Duration) {
+	t.Helper()
+	if got != nil {
+		t.Errorf("%s: got %v, want nil", field, got.Duration())
 	}
 }
 

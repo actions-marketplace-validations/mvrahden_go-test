@@ -23,22 +23,23 @@ var gotestFlags = map[string]FlagKind{
 	"--output":           ValueFlag,
 	"--input":            ValueFlag,
 	"--parallel":         ValueFlag,
+	"--timeout":          ValueFlag,
 }
 
 var testAllowed = flagSet(
 	"--debug", "--ci", "--spec", "--update-snapshots", "--no-cache",
-	"--min", "--setup-timeout", "--parallel",
+	"--min", "--setup-timeout", "--timeout", "--parallel",
 )
 
 var specAllowed = flagSet(
 	"--debug", "--ci", "--update-snapshots", "--no-cache",
-	"--min", "--setup-timeout", "--parallel",
+	"--min", "--setup-timeout", "--timeout", "--parallel",
 	"--format", "--output", "--input", "--no-color",
 )
 
 var watchAllowed = flagSet(
 	"--debug", "--ci", "--update-snapshots", "--no-cache",
-	"--setup-timeout", "--debounce", "--parallel",
+	"--setup-timeout", "--timeout", "--debounce", "--parallel",
 )
 
 func flagSet(names ...string) map[string]bool {

@@ -39,6 +39,12 @@ func Run(cfg ExecConfig) int {
 		shutdownSignals...)
 	defer stop()
 
+	if cfg.GlobalTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, cfg.GlobalTimeout)
+		defer cancel()
+	}
+
 	result, err := gotestrunner.RunPipeline(ctx, gotestrunner.PipelineConfig{
 		GoTestArgs:      cfg.GoTestArgs,
 		SetupTimeout:    cfg.SetupTimeout,
@@ -51,6 +57,12 @@ func Run(cfg ExecConfig) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
+	}
+	if cfg.GlobalTimeout > 0 && ctx.Err() == context.DeadlineExceeded {
+		fmt.Fprintf(os.Stderr, "FAIL: global --timeout exceeded after %v\n", cfg.GlobalTimeout)
+		if result.ExitCode == 0 {
+			return 1
+		}
 	}
 	return result.ExitCode
 }

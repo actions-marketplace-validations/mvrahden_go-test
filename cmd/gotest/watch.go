@@ -40,7 +40,7 @@ func parseDebounceFlag(args []string) (time.Duration, error) {
 
 func runWatch(inv Invocation) int {
 	args := inv.DefaultArgs()
-	if inv.Config.Debounce.Duration() > 0 && !hasFlag(args, "--debounce") {
+	if inv.Config.Debounce != nil && !hasFlag(args, "--debounce") {
 		args = append([]string{"--debounce=" + inv.Config.Debounce.Duration().String()}, args...)
 	}
 	ownArgs, goTestArgs, err := SplitArgs(args, watchAllowed)
@@ -54,6 +54,12 @@ func runWatch(inv Invocation) int {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
 	}
+	globalTimeout, err := parseGlobalTimeoutFlag(ownArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
+		return 2
+	}
+	globalTimeout = resolveGlobalTimeout(globalTimeout)
 	debounceDuration, err := parseDebounceFlag(ownArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
@@ -73,6 +79,7 @@ func runWatch(inv Invocation) int {
 		GoTestArgs:      goTestArgs,
 		PackagePatterns: patterns,
 		SetupTimeout:    setupTimeout,
+		GlobalTimeout:   globalTimeout,
 		Debug:           slices.Contains(ownArgs, "--debug"),
 		CI:              slices.Contains(ownArgs, "--ci"),
 		UpdateSnapshots: slices.Contains(ownArgs, "--update-snapshots"),
@@ -200,7 +207,14 @@ func watchRunOnce(ctx context.Context, cfg ExecConfig, jsonMode bool) int {
 		mode = gotestrunner.RunStreamJSON
 	}
 
-	result, err := gotestrunner.RunPipeline(ctx, gotestrunner.PipelineConfig{
+	runCtx := ctx
+	if cfg.GlobalTimeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, cfg.GlobalTimeout)
+		defer cancel()
+	}
+
+	result, err := gotestrunner.RunPipeline(runCtx, gotestrunner.PipelineConfig{
 		GoTestArgs:      cfg.GoTestArgs,
 		SetupTimeout:    cfg.SetupTimeout,
 		UpdateSnapshots: cfg.UpdateSnapshots,
@@ -212,6 +226,12 @@ func watchRunOnce(ctx context.Context, cfg ExecConfig, jsonMode bool) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
+	}
+	if cfg.GlobalTimeout > 0 && runCtx.Err() == context.DeadlineExceeded {
+		fmt.Fprintf(os.Stderr, "FAIL: global --timeout exceeded after %v\n", cfg.GlobalTimeout)
+		if result.ExitCode == 0 {
+			return 1
+		}
 	}
 	return result.ExitCode
 }

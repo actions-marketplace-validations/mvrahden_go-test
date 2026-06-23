@@ -1557,6 +1557,23 @@ func (s *GotestrunnerTestSuite) TestBuildExtraEnv(t *gotest.T) {
 	})
 }
 
+func (s *GotestrunnerTestSuite) TestResolveSetupTimeout(t *gotest.T) {
+	for sub, tc := range gotest.Each(t, []struct {
+		Name   string
+		input  time.Duration
+		expect time.Duration
+	}{
+		{"not set defaults to 2m", 0, 2 * time.Minute},
+		{"positive passed through", 5 * time.Minute, 5 * time.Minute},
+		{"negative means no limit", -1, 0},
+		{"large negative means no limit", -30 * time.Second, 0},
+		{"small positive passed through", 10 * time.Second, 10 * time.Second},
+	}) {
+		got := gotestrunner.ExportResolveSetupTimeout(tc.input)
+		gotest.Equal(sub, tc.expect, got)
+	}
+}
+
 func (s *GotestrunnerTestSuite) TestCIAutoDetection(t *gotest.T) {
 	t.When("auto-detecting CI from environment", func(w *gotest.T) {
 		w.It("sets CI when CI=true and GOTEST_CI is unset", func(it *gotest.T) {

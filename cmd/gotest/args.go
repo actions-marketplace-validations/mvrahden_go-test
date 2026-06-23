@@ -30,8 +30,11 @@ func (inv Invocation) TagArgs() []string {
 // each only if not already set via CLI flags.
 func (inv Invocation) DefaultArgs() []string {
 	out := inv.TagArgs()
-	if inv.Config.SetupTimeout.Duration() != 0 && !hasFlag(out, "--setup-timeout") {
+	if inv.Config.SetupTimeout != nil && !hasFlag(out, "--setup-timeout") {
 		out = append([]string{"--setup-timeout=" + inv.Config.SetupTimeout.Duration().String()}, out...)
+	}
+	if inv.Config.Timeout != nil && !hasFlag(out, "--timeout") {
+		out = append([]string{"--timeout=" + inv.Config.Timeout.Duration().String()}, out...)
 	}
 	return out
 }
@@ -49,6 +52,7 @@ type ExecConfig struct {
 	GoTestArgs      []string
 	PackagePatterns []string
 	SetupTimeout    time.Duration
+	GlobalTimeout   time.Duration
 	Debug           bool
 	CI              bool
 	JSON            bool

@@ -12,6 +12,19 @@ import (
 	"github.com/mvrahden/go-test/internal/protocol"
 )
 
+const DefaultSetupTimeout = 2 * time.Minute
+
+func resolveSetupTimeout(d time.Duration) time.Duration {
+	switch {
+	case d > 0:
+		return d
+	case d < 0:
+		return 0
+	default:
+		return DefaultSetupTimeout
+	}
+}
+
 func computeDispatchConcurrency(runFlags *[]string, budget, totalSuites int) int {
 	userParallel := ExtractParallelValue(*runFlags)
 
@@ -79,6 +92,7 @@ func buildBaseEnv(cfg PipelineConfig) []string {
 }
 
 func prepareTestRun(ctx context.Context, overlay *OverlayResult, buildFlags []string, setupTimeout time.Duration) ([]CompileResult, *SharedFixtureProcess, context.CancelFunc, error) {
+	setupTimeout = resolveSetupTimeout(setupTimeout)
 	ctx, cancel := context.WithCancel(ctx)
 
 	var compiled []CompileResult
@@ -225,6 +239,7 @@ func runStreaming(ctx context.Context, cfg PipelineConfig, overlay *OverlayResul
 		os.MkdirAll(coverDir, 0o755)
 	}
 
+	resolvedSetupTimeout := resolveSetupTimeout(cfg.SetupTimeout)
 	baseEnv := buildBaseEnv(cfg)
 
 	fixtureStarted := make(chan struct{})
@@ -240,12 +255,28 @@ func runStreaming(ctx context.Context, cfg PipelineConfig, overlay *OverlayResul
 		go func() {
 			defer fixtureWg.Done()
 			var err error
-			setupProc, err = StartSharedFixtures(streamCtx, overlay.WorkDir, overlay.SharedFixtures, cfg.SetupTimeout)
+			setupProc, err = StartSharedFixtures(streamCtx, overlay.WorkDir, overlay.SharedFixtures, resolvedSetupTimeout)
 			if err != nil {
 				fixtureStartErr = err
 				streamCancel()
 			}
 			close(fixtureStarted)
+			if err != nil {
+				return
+			}
+			var setupDeadline <-chan time.Time
+			if resolvedSetupTimeout > 0 {
+				timer := time.NewTimer(resolvedSetupTimeout)
+				defer timer.Stop()
+				setupDeadline = timer.C
+			}
+			select {
+			case <-setupProc.AllDone():
+			case <-streamCtx.Done():
+			case <-setupDeadline:
+				fmt.Fprintf(os.Stderr, "FAIL: shared fixture setup timed out after %v\n", resolvedSetupTimeout)
+				streamCancel()
+			}
 		}()
 	} else {
 		close(fixtureStarted)
