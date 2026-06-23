@@ -13,23 +13,24 @@ import (
 const FileName = ".gotest.yml"
 
 // ProjectConfig holds settings loaded from .gotest.yml.
-// CLI flags take precedence over these values; zero values are ignored.
+// CLI flags take precedence over these values; nil/zero values are ignored.
 type ProjectConfig struct {
 	// Tags is a comma-separated list of build tags passed to go test (e.g. "integration,e2e").
 	Tags string `yaml:"tags"`
 	// SetupTimeout is the total budget for all shared fixture setup.
-	// When omitted, each fixture's own SharedFixtureConfig().Timeout governs.
-	SetupTimeout Duration `yaml:"setup-timeout"`
+	// When omitted, the CLI default (2m) applies. Set to 0 to disable.
+	SetupTimeout *Duration `yaml:"setup-timeout"`
 	// Timeout is the global pipeline deadline.
-	// When omitted, the CLI default (15m) applies. Use 0 on the CLI flag to disable.
-	Timeout Duration `yaml:"timeout"`
+	// When omitted, the CLI default (15m) applies. Set to 0 to disable.
+	Timeout *Duration `yaml:"timeout"`
 	// MinCoverage is the minimum coverage percentage (0-100). The run fails if coverage is below.
 	MinCoverage int `yaml:"min-coverage"`
 	// Parallel is the total concurrency budget (concurrent test methods across all
 	// suite processes). Zero means use the default (2×GOMAXPROCS).
 	Parallel int `yaml:"parallel"`
-	// Debounce is the delay before re-running tests in watch mode. Overrides the CLI default (200ms).
-	Debounce Duration `yaml:"debounce"`
+	// Debounce is the delay before re-running tests in watch mode.
+	// When omitted, the CLI default (200ms) applies.
+	Debounce *Duration `yaml:"debounce"`
 	// Lint holds lint-specific configuration.
 	Lint LintConfig `yaml:"lint"`
 }
@@ -45,6 +46,11 @@ type Duration time.Duration
 
 func (d Duration) Duration() time.Duration {
 	return time.Duration(d)
+}
+
+func Dur(d time.Duration) *Duration {
+	v := Duration(d)
+	return &v
 }
 
 func (d *Duration) UnmarshalYAML(value *yaml.Node) error {

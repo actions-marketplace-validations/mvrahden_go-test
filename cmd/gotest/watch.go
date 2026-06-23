@@ -40,7 +40,7 @@ func parseDebounceFlag(args []string) (time.Duration, error) {
 
 func runWatch(inv Invocation) int {
 	args := inv.DefaultArgs()
-	if inv.Config.Debounce.Duration() > 0 && !hasFlag(args, "--debounce") {
+	if inv.Config.Debounce != nil && !hasFlag(args, "--debounce") {
 		args = append([]string{"--debounce=" + inv.Config.Debounce.Duration().String()}, args...)
 	}
 	ownArgs, goTestArgs, err := SplitArgs(args, watchAllowed)
