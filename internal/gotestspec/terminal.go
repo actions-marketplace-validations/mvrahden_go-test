@@ -145,16 +145,36 @@ func renderErrorOutput(w io.Writer, output []string, depth int, c colors) {
 }
 
 func filterOutput(output []string) []string {
-	var filtered []string
+	var lines []string
 	for _, line := range output {
-		trimmed := strings.TrimSpace(line)
+		stripped := strings.TrimRight(line, " \t\n\r")
+		trimmed := strings.TrimSpace(stripped)
 		if trimmed == "" {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "=== ") || strings.HasPrefix(trimmed, "--- ") {
 			continue
 		}
-		filtered = append(filtered, trimmed)
+		lines = append(lines, stripped)
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+
+	minIndent := len(lines[0]) - len(strings.TrimLeft(lines[0], " \t"))
+	for _, line := range lines[1:] {
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if indent < minIndent {
+			minIndent = indent
+		}
+	}
+	if minIndent == 0 {
+		return lines
+	}
+
+	filtered := make([]string, len(lines))
+	for i, line := range lines {
+		filtered[i] = line[minIndent:]
 	}
 	return filtered
 }

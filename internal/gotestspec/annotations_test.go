@@ -168,10 +168,10 @@ func TestCollectAnnotations_FiltersLogNoiseBeforeAssertion(t *testing.T) {
 				"    2026/06/25 18:10:03 INFO staging params.json bytes=2\n",
 				"    2026/06/25 18:10:03 INFO file stored successfully\n",
 				"    helpers.go:37: foo_test.go:74: Eventually failed after 10s:\n",
-				"    last failure:\n",
-				"    helpers.go:47: True failed:\n",
-				"    expected: true\n",
-				"    actual:   false\n",
+				"        last failure:\n",
+				"        helpers.go:47: True failed:\n",
+				"            expected: true\n",
+				"            actual:   false\n",
 			},
 		}},
 	}}
@@ -185,8 +185,11 @@ func TestCollectAnnotations_FiltersLogNoiseBeforeAssertion(t *testing.T) {
 	if strings.Contains(a.Message, "INFO") {
 		t.Errorf("annotation message should not contain log noise, got:\n%s", a.Message)
 	}
-	if !strings.Contains(a.Message, "True failed:") {
-		t.Errorf("annotation message should contain assertion output, got:\n%s", a.Message)
+	if !strings.Contains(a.Message, "    last failure:") {
+		t.Errorf("annotation message should preserve relative indentation, got:\n%s", a.Message)
+	}
+	if !strings.Contains(a.Message, "        expected: true") {
+		t.Errorf("annotation message should preserve nested indentation, got:\n%s", a.Message)
 	}
 }
 
