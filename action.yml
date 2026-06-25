@@ -1,0 +1,103 @@
+name: "Go Test Summary"
+description: "Run Go tests with failure-focused summary, GitHub annotations, and coverage reporting"
+
+branding:
+  icon: "check-circle"
+  color: "blue"
+
+inputs:
+  packages:
+    description: "Package patterns to test"
+    default: "./..."
+  race:
+    description: "Enable race detector"
+    default: "false"
+  coverage:
+    description: "Enable coverage profiling and reporting"
+    default: "false"
+  min-coverage:
+    description: "Minimum coverage percentage (0-100, fails if below)"
+    required: false
+  flags:
+    description: "Additional gotest flags (--double-dash style)"
+    required: false
+  go-test-flags:
+    description: "Additional go test flags (-single-dash style)"
+    required: false
+  version:
+    description: "gotest version to install (e.g. v1.0.0)"
+    default: "latest"
+
+outputs:
+  exit-code:
+    description: "Test process exit code"
+    value: ${{ steps.test.outputs.exit-code }}
+  coverage:
+    description: "Coverage percentage (empty if coverage not enabled)"
+    value: ${{ steps.test.outputs.coverage }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install gotest
+      shell: bash
+      run: go install github.com/mvrahden/go-test/cmd/gotest@${{ inputs.version }}
+
+    - name: Run tests
+      id: test
+      shell: bash
+      env:
+        INPUT_PACKAGES: ${{ inputs.packages }}
+        INPUT_RACE: ${{ inputs.race }}
+        INPUT_COVERAGE: ${{ inputs.coverage }}
+        INPUT_MIN_COVERAGE: ${{ inputs.min-coverage }}
+        INPUT_FLAGS: ${{ inputs.flags }}
+        INPUT_GO_TEST_FLAGS: ${{ inputs.go-test-flags }}
+      run: |
+        args=(summary --github)
+
+        cover_profile=""
+        if [ "$INPUT_COVERAGE" = "true" ]; then
+          cover_profile="$(mktemp -t gotest-cover-XXXXXX.out)"
+          args+=("--coverage=$cover_profile")
+        fi
+
+        if [ -n "$INPUT_MIN_COVERAGE" ]; then
+          args+=("--min=$INPUT_MIN_COVERAGE")
+        fi
+
+        if [ -n "$INPUT_FLAGS" ]; then
+          read -ra extra <<< "$INPUT_FLAGS"
+          args+=("${extra[@]}")
+        fi
+
+        read -ra pkgs <<< "$INPUT_PACKAGES"
+        args+=("${pkgs[@]}")
+
+        if [ "$INPUT_RACE" = "true" ]; then
+          args+=(-race)
+        fi
+
+        if [ -n "$cover_profile" ]; then
+          args+=("-coverprofile=$cover_profile")
+        fi
+
+        if [ -n "$INPUT_GO_TEST_FLAGS" ]; then
+          read -ra gtflags <<< "$INPUT_GO_TEST_FLAGS"
+          args+=("${gtflags[@]}")
+        fi
+
+        set +e
+        gotest "${args[@]}"
+        exit_code=$?
+        set -e
+
+        echo "exit-code=$exit_code" >> "$GITHUB_OUTPUT"
+
+        if [ -n "$cover_profile" ] && [ -f "$cover_profile" ]; then
+          cov=$(go tool cover -func="$cover_profile" | tail -1 | awk '{print $NF}' | sed 's/%//')
+          echo "coverage=$cov" >> "$GITHUB_OUTPUT"
+          rm -f "$cover_profile"
+        fi
+
+        exit "$exit_code"
