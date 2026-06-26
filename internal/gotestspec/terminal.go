@@ -23,13 +23,18 @@ var ansiColors = colors{
 var noColors = colors{}
 
 type renderConfig struct {
-	color bool
+	color    bool
+	coverage *CoverageReport
 }
 
 type RenderOption func(*renderConfig)
 
 func WithNoColor() RenderOption {
 	return func(c *renderConfig) { c.color = false }
+}
+
+func WithCoverage(report *CoverageReport) RenderOption {
+	return func(c *renderConfig) { c.coverage = report }
 }
 
 func RenderTerminal(w io.Writer, packages []*Package, opts ...RenderOption) {
@@ -134,16 +139,44 @@ func formatDuration(d time.Duration) string {
 
 func renderErrorOutput(w io.Writer, output []string, depth int, c colors) {
 	indent := strings.Repeat("  ", depth)
+	for _, line := range filterOutput(output) {
+		fmt.Fprintf(w, "%s%s%s%s\n", indent, c.red, line, c.reset)
+	}
+}
+
+func filterOutput(output []string) []string {
+	var lines []string
 	for _, line := range output {
-		trimmed := strings.TrimSpace(line)
+		stripped := strings.TrimRight(line, " \t\n\r")
+		trimmed := strings.TrimSpace(stripped)
 		if trimmed == "" {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "=== ") || strings.HasPrefix(trimmed, "--- ") {
 			continue
 		}
-		fmt.Fprintf(w, "%s%s%s%s\n", indent, c.red, trimmed, c.reset)
+		lines = append(lines, stripped)
 	}
+	if len(lines) == 0 {
+		return nil
+	}
+
+	minIndent := len(lines[0]) - len(strings.TrimLeft(lines[0], " \t"))
+	for _, line := range lines[1:] {
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if indent < minIndent {
+			minIndent = indent
+		}
+	}
+	if minIndent == 0 {
+		return lines
+	}
+
+	filtered := make([]string, len(lines))
+	for i, line := range lines {
+		filtered[i] = line[minIndent:]
+	}
+	return filtered
 }
 
 func renderSummary(w io.Writer, stats Stats, c colors) {

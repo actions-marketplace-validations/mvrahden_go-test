@@ -16,6 +16,8 @@ var gotestFlags = map[string]FlagKind{
 	"--update-snapshots": BoolFlag,
 	"--no-color":         BoolFlag,
 	"--no-cache":         BoolFlag,
+	"--github":           BoolFlag,
+	"--coverage":         ValueFlag,
 	"--min":              ValueFlag,
 	"--setup-timeout":    ValueFlag,
 	"--debounce":         ValueFlag,
@@ -35,6 +37,13 @@ var specAllowed = flagSet(
 	"--debug", "--ci", "--update-snapshots", "--no-cache",
 	"--min", "--setup-timeout", "--timeout", "--parallel",
 	"--format", "--output", "--input", "--no-color",
+)
+
+var summaryAllowed = flagSet(
+	"--debug", "--ci", "--update-snapshots", "--no-cache",
+	"--min", "--setup-timeout", "--timeout", "--parallel",
+	"--format", "--output", "--input", "--no-color", "--github",
+	"--coverage",
 )
 
 var watchAllowed = flagSet(
