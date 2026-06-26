@@ -49,6 +49,9 @@ func runSummary(inv Invocation) int {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
 	}
+	if minCoverage == 0 {
+		minCoverage = inv.Config.MinCoverage
+	}
 
 	parallel, err := parseParallelFlag(ownArgs)
 	if err != nil {
