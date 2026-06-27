@@ -617,11 +617,11 @@ func (s *AssertionsTestSuite) TestErrorAs(t *gotest.T) {
 
 	t.When("error does not match type", func(w *gotest.T) {
 		w.It("fails", func(it *gotest.T) {
-			m := gotest.Record(func(r *gotest.R) { gotest.ErrorAs[*myError](r, errors.New("plain error")) })
+			m := gotest.Record(func(r *gotest.R) { _ = gotest.ErrorAs[*myError](r, errors.New("plain error")) })
 			gotest.True(it, m.Failed())
 		})
 		w.It("fails for nil error", func(it *gotest.T) {
-			m := gotest.Record(func(r *gotest.R) { gotest.ErrorAs[*myError](r, nil) })
+			m := gotest.Record(func(r *gotest.R) { _ = gotest.ErrorAs[*myError](r, nil) })
 			gotest.True(it, m.Failed())
 		})
 	})
@@ -850,11 +850,11 @@ func (s *AssertionsTestSuite) TestLen(t *gotest.T) {
 			gotest.False(it, m.Failed())
 		})
 		w.It("passes for nil slice", func(it *gotest.T) {
-			m := gotest.Record(func(r *gotest.R) { gotest.Len(r, []int(nil), 0) })
+			m := gotest.Record(func(r *gotest.R) { gotest.Empty(r, []int(nil)) })
 			gotest.False(it, m.Failed())
 		})
 		w.It("passes for nil map", func(it *gotest.T) {
-			m := gotest.Record(func(r *gotest.R) { gotest.Len(r, map[string]int(nil), 0) })
+			m := gotest.Record(func(r *gotest.R) { gotest.Empty(r, map[string]int(nil)) })
 			gotest.False(it, m.Failed())
 		})
 	})

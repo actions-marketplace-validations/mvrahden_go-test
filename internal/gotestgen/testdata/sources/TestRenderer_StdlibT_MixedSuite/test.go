@@ -9,5 +9,5 @@ import (
 type MixedTestSuite struct{}
 
 func (s *MixedTestSuite) BeforeEach(t *testing.T) {}
-func (s *MixedTestSuite) TestStdlib(t *testing.T)  {}
-func (s *MixedTestSuite) TestGotest(t *gotest.T)   {}
+func (s *MixedTestSuite) TestStdlib(t *testing.T) {}
+func (s *MixedTestSuite) TestGotest(t *gotest.T)  {}

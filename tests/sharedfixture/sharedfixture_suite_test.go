@@ -32,11 +32,11 @@ func (s *SharedFixtureIntegrationTestSuite) TestSharedFixtureIntegration(t *gote
 	gotest.NoError(t, err)
 
 	t.When("Discovery", func(w *gotest.T) {
-		gotest.Equal(w, 3, len(allSharedFixtures), "expected Alpha, Beta, and Gamma shared fixtures")
+		gotest.Len(w, allSharedFixtures, 3, "expected Alpha, Beta, and Gamma shared fixtures")
 
 		found := map[string]gotestgen.SharedFixtureInfo{}
-		for _, sf := range allSharedFixtures {
-			found[sf.Identifier] = sf
+		for i := range allSharedFixtures {
+			found[allSharedFixtures[i].Identifier] = allSharedFixtures[i]
 		}
 
 		alpha, ok := found["AlphaSharedFixture"]
@@ -62,7 +62,7 @@ func (s *SharedFixtureIntegrationTestSuite) TestSharedFixtureIntegration(t *gote
 			gotest.False(it, gamma.HasDehydrate)
 			gotest.Contains(it, gamma.TransferFields, "Derived")
 			gotest.NotContains(it, gamma.TransferFields, "Alpha", "dep pointer excluded from transfer")
-			gotest.Equal(it, 1, len(gamma.Dependencies))
+			gotest.Len(it, gamma.Dependencies, 1)
 			gotest.Contains(it, gamma.Dependencies[0], "AlphaSharedFixture")
 		})
 	})
@@ -78,7 +78,7 @@ func (s *SharedFixtureIntegrationTestSuite) TestSharedFixtureIntegration(t *gote
 		sharedDir := filepath.Join(tmpDir, "shared")
 		gotest.NoError(w, os.MkdirAll(sharedDir, 0755))
 		setupFile := filepath.Join(sharedDir, "setup.go")
-		gotest.NoError(w, os.WriteFile(setupFile, setupSrc, 0644))
+		gotest.NoError(w, os.WriteFile(setupFile, setupSrc, 0600))
 
 		setupBin := filepath.Join(sharedDir, "setup")
 		if runtime.GOOS == "windows" {
@@ -129,7 +129,7 @@ func (s *SharedFixtureIntegrationTestSuite) TestSharedFixtureIntegration(t *gote
 		gotest.NoError(w, err)
 
 		stateFile := filepath.Join(sharedDir, "state.json")
-		gotest.NoError(w, os.WriteFile(stateFile, stateBytes, 0644))
+		gotest.NoError(w, os.WriteFile(stateFile, stateBytes, 0600))
 
 		w.It("TempDirStructure", func(it *gotest.T) {
 			_, err := os.Stat(stateFile)
@@ -137,7 +137,7 @@ func (s *SharedFixtureIntegrationTestSuite) TestSharedFixtureIntegration(t *gote
 		})
 
 		w.It("StateContent", func(it *gotest.T) {
-			gotest.Equal(it, 3, len(state), "expected entries for Alpha, Beta, and Gamma")
+			gotest.Len(it, state, 3, "expected entries for Alpha, Beta, and Gamma")
 
 			alphaKey := "github.com/mvrahden/go-test/tests/sharedfixture/fixtures.AlphaSharedFixture"
 			betaKey := "github.com/mvrahden/go-test/tests/sharedfixture/fixtures.BetaSharedFixture"
@@ -226,13 +226,13 @@ func (s *SharedFixtureIntegrationTestSuite) TestSharedFixtureIntegration(t *gote
 				keys := r.SuiteRequiredSharedFixtureKeys
 
 				alphaKeys := keys["TestAlphaTestSuite"]
-				gotest.Equal(it, 1, len(alphaKeys), "AlphaTestSuite needs only Alpha")
+				gotest.Len(it, alphaKeys, 1, "AlphaTestSuite needs only Alpha")
 
 				multiKeys := keys["TestMultiTestSuite"]
-				gotest.Equal(it, 2, len(multiKeys), "MultiTestSuite needs Alpha + Beta")
+				gotest.Len(it, multiKeys, 2, "MultiTestSuite needs Alpha + Beta")
 
 				gammaKeys := keys["TestGammaTestSuite"]
-				gotest.Equal(it, 2, len(gammaKeys), "GammaTestSuite needs Gamma + Alpha transitively")
+				gotest.Len(it, gammaKeys, 2, "GammaTestSuite needs Gamma + Alpha transitively")
 
 				plainKeys := keys["TestPlainTestSuite"]
 				gotest.Empty(it, plainKeys, "PlainTestSuite needs no shared fixtures")

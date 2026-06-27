@@ -40,6 +40,12 @@ func (s *LintTestSuite) TestAnalyzer(t *gotest.T) {
 		})
 	})
 
+	t.When("assertion simplify", func(w *gotest.T) {
+		w.It("detects sub-optimal assertion patterns", func(it *gotest.T) {
+			analysistest.RunWithSuggestedFixes(it.T(), testdata, lint.Analyzer, "withsimplify")
+		})
+	})
+
 	t.When("file-level nolint", func(w *gotest.T) {
 		w.It("respects file-level nolint", func(it *gotest.T) {
 			analysistest.Run(it.T(), testdata, lint.Analyzer, "withnolint_file")
@@ -51,7 +57,7 @@ func (s *LintTestSuite) TestDisableNolintFlag(t *gotest.T) {
 	t.When("analyzer flags", func(w *gotest.T) {
 		w.It("registers the disable-nolint flag", func(it *gotest.T) {
 			f := lint.Analyzer.Flags.Lookup("disable-nolint")
-			gotest.True(it, f != nil)
+			gotest.NotZero(it, f)
 			gotest.Equal(it, "false", f.DefValue)
 		})
 	})
@@ -65,6 +71,8 @@ func (s *LintTestSuite) TestParseNolint(t *gotest.T) {
 		wantRules map[lint.Rule]bool
 	}{
 		{"blanket nolint", "//nolint", true, nil},
+		{"blanket nolint with space", "// nolint", true, nil},
+		{"spaced nolint with rule", "// nolint:stdlib-test", true, map[lint.Rule]bool{lint.StdlibTest: true}},
 		{"single rule", "//nolint:stdlib-test", true, map[lint.Rule]bool{lint.StdlibTest: true}},
 		{"multiple rules", "//nolint:stdlib-test,testify", true, map[lint.Rule]bool{lint.StdlibTest: true, lint.Testify: true}},
 		{"with trailing comment", "//nolint:stdlib-test // legacy test", true, map[lint.Rule]bool{lint.StdlibTest: true}},
@@ -83,9 +91,9 @@ func (s *LintTestSuite) TestParseNolint(t *gotest.T) {
 					return
 				}
 				if tc.wantRules == nil {
-					gotest.True(it, rules == nil)
+					gotest.Empty(it, rules)
 				} else {
-					gotest.Equal(it, len(tc.wantRules), len(rules))
+					gotest.Len(it, tc.wantRules, len(rules))
 					for r := range tc.wantRules {
 						gotest.True(it, rules[r])
 					}

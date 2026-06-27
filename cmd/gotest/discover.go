@@ -16,8 +16,8 @@ import (
 
 // discoverOutput is the top-level JSON structure emitted by "gotest discover".
 type discoverOutput struct {
-	Packages []discoverPackage  `json:"packages"`
-	Warnings []discoverWarning  `json:"warnings,omitempty"`
+	Packages []discoverPackage `json:"packages"`
+	Warnings []discoverWarning `json:"warnings,omitempty"`
 }
 
 type discoverWarning struct {
@@ -60,7 +60,7 @@ type discoverMethod struct {
 	Col      int    `json:"col"`
 }
 
-func runDiscover(inv Invocation) int {
+func runDiscover(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 	tags, remaining := extractTagsFlag(inv.TagArgs())
 	patterns := ExtractPackagePatterns(remaining)
 	var buildFlags []string

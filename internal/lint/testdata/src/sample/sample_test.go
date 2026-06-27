@@ -8,17 +8,17 @@ import (
 
 type UserServiceTestSuite struct{}
 
-func (s *UserServiceTestSuite) TestCreate()                {} // want `test method UserServiceTestSuite\.TestCreate has wrong signature`
-func (s *UserServiceTestSuite) TestCorrectSig(t *gotest.T)                    {}
-func (s *UserServiceTestSuite) TestContextualSig(t *gotest.T, ctx *struct{})  {}
-func (s *UserServiceTestSuite) TestStdlibSig(t *testing.T)                    {}
-func (s *UserServiceTestSuite) TestStdlibCtxSig(t *testing.T, ctx *struct{})  {}
-func (s *UserServiceTestSuite) BeforeAll()                 {}
-func (s *UserServiceTestSuite) AfterAll()                  {}
-func (s *UserServiceTestSuite) X_AfterEach()               {} // want `X_ prefix on lifecycle hook UserServiceTestSuite\.X_AfterEach has no effect`
-func (s *UserServiceTestSuite) BeforreAll()                {} // want `method BeforreAll on suite UserServiceTestSuite is similar to lifecycle hook BeforeAll`
-func (s UserServiceTestSuite) TestByValue()                {} // want `suite method UserServiceTestSuite\.TestByValue should use a pointer receiver` `test method UserServiceTestSuite\.TestByValue has wrong signature`
-func (s *UserServiceTestSuite) F_TestFocused()             {} // want `focused method UserServiceTestSuite\.F_TestFocused should not be committed` `test method UserServiceTestSuite\.F_TestFocused has wrong signature`
+func (s *UserServiceTestSuite) TestCreate()                                  {} // want `test method UserServiceTestSuite\.TestCreate has wrong signature`
+func (s *UserServiceTestSuite) TestCorrectSig(t *gotest.T)                   {}
+func (s *UserServiceTestSuite) TestContextualSig(t *gotest.T, ctx *struct{}) {}
+func (s *UserServiceTestSuite) TestStdlibSig(t *testing.T)                   {}
+func (s *UserServiceTestSuite) TestStdlibCtxSig(t *testing.T, ctx *struct{}) {}
+func (s *UserServiceTestSuite) BeforeAll()                                   {}
+func (s *UserServiceTestSuite) AfterAll()                                    {}
+func (s *UserServiceTestSuite) X_AfterEach()                                 {} // want `X_ prefix on lifecycle hook UserServiceTestSuite\.X_AfterEach has no effect`
+func (s *UserServiceTestSuite) BeforreAll()                                  {} // want `method BeforreAll on suite UserServiceTestSuite is similar to lifecycle hook BeforeAll`
+func (s UserServiceTestSuite) TestByValue()                                  {} // want `suite method UserServiceTestSuite\.TestByValue should use a pointer receiver` `test method UserServiceTestSuite\.TestByValue has wrong signature`
+func (s *UserServiceTestSuite) F_TestFocused()                               {} // want `focused method UserServiceTestSuite\.F_TestFocused should not be committed` `test method UserServiceTestSuite\.F_TestFocused has wrong signature`
 
 type F_OrderTestSuite struct{} // want `focused suite F_OrderTestSuite should not be committed`
 

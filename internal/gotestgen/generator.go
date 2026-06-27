@@ -24,8 +24,8 @@ type GenerateResult struct {
 }
 
 const (
-	packageEvalMode    = packages.NeedModule | packages.NeedSyntax | packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedDeps
-	discoveryEvalMode  = packages.NeedModule | packages.NeedSyntax | packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedFiles
+	packageEvalMode   = packages.NeedModule | packages.NeedSyntax | packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedDeps
+	discoveryEvalMode = packages.NeedModule | packages.NeedSyntax | packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedFiles
 )
 
 func CollectFromLoaded(loadResults []*LoadResult) (gotestast.TestSuiteSpecSet, error) {
@@ -270,7 +270,7 @@ func generateFromLoaded(loadResults []*LoadResult) (GenerateResults, []SharedFix
 	return results, allSharedFixtures, nil
 }
 
-func generateForPkg(pkg *packages.Package, spec SpecOutcome, collected CollectorResult, sharedSeen map[string]bool, allShared *[]SharedFixtureInfo) ([]byte, []string, map[string][]string, error) {
+func generateForPkg(pkg *packages.Package, spec SpecOutcome, collected CollectorResult, sharedSeen map[string]bool, allShared *[]SharedFixtureInfo) ([]byte, []string, map[string][]string, error) { //nolint:gocritic // hugeParam: stable API
 	if pkg == nil || len(spec.EffectiveTestSuites) == 0 {
 		return nil, nil, nil, nil
 	}
@@ -280,11 +280,11 @@ func generateForPkg(pkg *packages.Package, spec SpecOutcome, collected Collector
 		return nil, nil, nil, err
 	}
 
-	for _, sf := range resolved.RequiredSharedFixtures {
-		key := sf.PkgPath + "." + sf.Identifier
+	for i := range resolved.RequiredSharedFixtures {
+		key := resolved.RequiredSharedFixtures[i].PkgPath + "." + resolved.RequiredSharedFixtures[i].Identifier
 		if !sharedSeen[key] {
 			sharedSeen[key] = true
-			*allShared = append(*allShared, sf)
+			*allShared = append(*allShared, resolved.RequiredSharedFixtures[i])
 		}
 	}
 
@@ -341,4 +341,3 @@ func fixtureHasSharedFixtures(rf *ResolvedFixture) bool {
 	}
 	return false
 }
-

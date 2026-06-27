@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/mvrahden/go-test/about"
+	"github.com/mvrahden/go-test/internal/about"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
 	"golang.org/x/tools/go/ast/inspector"
@@ -19,16 +19,17 @@ import (
 type Rule string
 
 const (
-	Focus         Rule = "focus"
-	Receiver      Rule = "receiver"
-	LifecycleTypo Rule = "lifecycle-typo"
-	LifecyclePair Rule = "lifecycle-pair"
-	GeneratedFile Rule = "generated-file"
-	StdlibTest    Rule = "stdlib-test"
-	Testify       Rule = "testify"
-	PollScope     Rule = "poll-scope"
-	TestSignature Rule = "test-signature"
-	XLifecycle    Rule = "x-lifecycle"
+	Focus             Rule = "focus"
+	Receiver          Rule = "receiver"
+	LifecycleTypo     Rule = "lifecycle-typo"
+	LifecyclePair     Rule = "lifecycle-pair"
+	GeneratedFile     Rule = "generated-file"
+	StdlibTest        Rule = "stdlib-test"
+	Testify           Rule = "testify"
+	PollScope         Rule = "poll-scope"
+	TestSignature     Rule = "test-signature"
+	XLifecycle        Rule = "x-lifecycle"
+	AssertionSimplify Rule = "assertion-simplify"
 )
 
 // SkippableRules is the set of rules that support opt-out via skip flags.
@@ -72,6 +73,7 @@ func run(pass *analysis.Pass) (any, error) {
 	checkStdlibTests(pass, insp)
 	checkTestifyImports(pass)
 	checkPollScope(pass, insp)
+	checkAssertionSimplify(pass, insp)
 
 	return nil, nil
 }
@@ -146,10 +148,15 @@ func docSuppressed(doc *ast.CommentGroup, rule Rule) bool {
 }
 
 func parseNolint(text string) (rules map[Rule]bool, ok bool) {
-	if !strings.HasPrefix(text, "//nolint") {
+	var rest string
+	switch {
+	case strings.HasPrefix(text, "//nolint"):
+		rest = text[len("//nolint"):]
+	case strings.HasPrefix(text, "// nolint"):
+		rest = text[len("// nolint"):]
+	default:
 		return nil, false
 	}
-	rest := text[len("//nolint"):]
 	if rest == "" {
 		return nil, true
 	}

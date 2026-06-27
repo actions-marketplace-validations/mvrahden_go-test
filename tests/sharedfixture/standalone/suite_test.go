@@ -3,8 +3,8 @@ package standalone
 import (
 	"io"
 
-	"github.com/mvrahden/go-test/tests/sharedfixture/fixtures"
 	"github.com/mvrahden/go-test/pkg/gotest"
+	"github.com/mvrahden/go-test/tests/sharedfixture/fixtures"
 )
 
 type AlphaTestSuite struct {

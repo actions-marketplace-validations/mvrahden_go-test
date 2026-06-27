@@ -6,10 +6,13 @@ import (
 )
 
 type InfraFixture struct{ Val string }
+
 func (f *InfraFixture) BeforeAll(ctx context.Context) error { return nil }
 
-type APIFixture struct { infra *InfraFixture }
+type APIFixture struct{ infra *InfraFixture }
+
 func (f *APIFixture) BeforeAll(ctx context.Context) error { return nil }
 
-type FullTestSuite struct { *APIFixture }
+type FullTestSuite struct{ *APIFixture }
+
 func (s *FullTestSuite) TestOne(t *gotest.T) {}

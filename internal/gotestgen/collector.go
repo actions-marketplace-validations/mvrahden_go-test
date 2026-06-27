@@ -141,4 +141,3 @@ func (collector) ApplyTestSuiteSpecs(result CollectorResult) (spec SpecOutcome, 
 		Fixtures:            result.Fixtures,
 	}, nil
 }
-

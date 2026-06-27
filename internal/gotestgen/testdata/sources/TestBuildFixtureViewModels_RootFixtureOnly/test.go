@@ -6,7 +6,7 @@ import (
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
 
-type MyFixture struct {}
+type MyFixture struct{}
 
 func (f *MyFixture) BeforeAll(ctx context.Context) error { return nil }
 func (f *MyFixture) AfterAll(ctx context.Context) error  { return nil }

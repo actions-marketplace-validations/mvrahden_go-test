@@ -346,7 +346,7 @@ func teardownDAG(fixtures []*FixtureNode, tracker *nodeTracker) bool {
 							mu.Unlock()
 						}
 					}
-					return  // shared state nodes don't have AfterAll in test process
+					return // shared state nodes don't have AfterAll in test process
 				}
 
 				if node.AfterAll != nil {
@@ -521,7 +521,7 @@ func writeBudgetFile(cfg MainConfig) {
 		maxPath = computeMaxTreePath(cfg.Roots)
 	}
 	budget := maxPath + cfg.MaxSuiteSetupTimeout + 30*time.Second
-	os.WriteFile(path, []byte(budget.String()), 0644)
+	_ = os.WriteFile(path, []byte(budget.String()), 0600)
 }
 
 func computeMaxTreePath(roots []*FixtureNode) time.Duration {
@@ -711,4 +711,3 @@ func (d *FixtureDAG) Teardown() bool {
 	})
 	return d.failed
 }
-

@@ -138,7 +138,7 @@ func TestMatchSnapshot_MatchesAfterCRLFFileCorruption(t *testing.T) {
 		t.Fatalf("read snap: %v", err)
 	}
 	corrupted := strings.ReplaceAll(string(data), "\n", "\r\n")
-	if err := os.WriteFile(snapFile, []byte(corrupted), 0644); err != nil {
+	if err := os.WriteFile(snapFile, []byte(corrupted), 0600); err != nil {
 		t.Fatalf("write corrupted snap: %v", err)
 	}
 
@@ -211,10 +211,13 @@ type mockT struct {
 	msg    string
 }
 
-func (m *mockT) Helper()                           {}
-func (m *mockT) FailNow()                          {}
-func (m *mockT) Name() string                      { return m.name }
-func (m *mockT) Errorf(format string, args ...any) { m.failed = true; m.msg = fmt.Sprintf(format, args...) }
+func (m *mockT) Helper()      {}
+func (m *mockT) FailNow()     {}
+func (m *mockT) Name() string { return m.name }
+func (m *mockT) Errorf(format string, args ...any) {
+	m.failed = true
+	m.msg = fmt.Sprintf(format, args...)
+}
 
 func TestReadAndRestore_SeekableReader(t *testing.T) {
 	r := strings.NewReader("test data")

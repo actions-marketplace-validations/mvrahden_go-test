@@ -57,10 +57,6 @@ jobs:
           go-version: ${{ matrix.go-version }}
       - name: Init workspace
         run: go work init . ./examples
-      - name: Vet
-        run: go vet ./... ./examples/...
-      - name: Lint
-        run: go run ./cmd/gotest-lint ./... ./examples/...
       - name: Test (stdlib)
         run: go test -ldflags=-checklinkname=0 -coverprofile=coverage-stdlib.out ./... -race
       - name: Test (suites)

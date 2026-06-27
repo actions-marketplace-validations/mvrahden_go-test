@@ -6,7 +6,7 @@ import (
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
 
-type InfraFixture struct {}
+type InfraFixture struct{}
 
 func (f *InfraFixture) BeforeAll(ctx context.Context) error  { return nil }
 func (f *InfraFixture) BeforeEach(ctx context.Context) error { return nil }

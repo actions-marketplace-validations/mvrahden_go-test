@@ -41,36 +41,36 @@ var buildValueFlags = map[string]bool{
 
 // runOnlyFlags are flags consumed exclusively by the test binary at runtime.
 var runOnlyFlags = map[string]bool{
-	"-v":         true,
-	"-failfast":  true,
-	"-short":     true,
-	"-benchmem":  true,
-	"-fullpath":  true,
+	"-v":        true,
+	"-failfast": true,
+	"-short":    true,
+	"-benchmem": true,
+	"-fullpath": true,
 }
 
 var runValueFlags = map[string]bool{
-	"-count":             true,
-	"-timeout":           true,
-	"-run":               true,
-	"-parallel":          true,
-	"-shuffle":           true,
-	"-bench":             true,
-	"-benchtime":         true,
-	"-coverprofile":      true,
-	"-cpuprofile":        true,
-	"-memprofile":        true,
-	"-blockprofile":      true,
-	"-mutexprofile":      true,
-	"-trace":             true,
-	"-outputdir":         true,
-	"-list":              true,
-	"-fuzz":              true,
-	"-fuzztime":          true,
-	"-fuzzminimizetime":  true,
-	"-cpu":               true,
-	"-blockprofilerate":  true,
-	"-memprofilerate":    true,
-	"-mutexprofilerate":  true,
+	"-count":            true,
+	"-timeout":          true,
+	"-run":              true,
+	"-parallel":         true,
+	"-shuffle":          true,
+	"-bench":            true,
+	"-benchtime":        true,
+	"-coverprofile":     true,
+	"-cpuprofile":       true,
+	"-memprofile":       true,
+	"-blockprofile":     true,
+	"-mutexprofile":     true,
+	"-trace":            true,
+	"-outputdir":        true,
+	"-list":             true,
+	"-fuzz":             true,
+	"-fuzztime":         true,
+	"-fuzzminimizetime": true,
+	"-cpu":              true,
+	"-blockprofilerate": true,
+	"-memprofilerate":   true,
+	"-mutexprofilerate": true,
 }
 
 // ClassifiedArgs holds the result of splitting go test arguments.
@@ -120,13 +120,14 @@ func ClassifyGoTestArgs(args []string) ClassifiedArgs {
 		}
 
 		if buildValueFlags[name] || buildSpecialValueFlags[name] {
-			if hasEquals {
+			switch {
+			case hasEquals:
 				result.BuildFlags = append(result.BuildFlags, arg)
 				i++
-			} else if i+1 < len(args) {
+			case i+1 < len(args):
 				result.BuildFlags = append(result.BuildFlags, arg, args[i+1])
 				i += 2
-			} else {
+			default:
 				result.BuildFlags = append(result.BuildFlags, arg)
 				i++
 			}
@@ -143,13 +144,14 @@ func ClassifyGoTestArgs(args []string) ClassifiedArgs {
 			if name == "-coverprofile" {
 				needsCoverBuild = true
 			}
-			if hasEquals {
+			switch {
+			case hasEquals:
 				result.RunFlags = append(result.RunFlags, arg)
 				i++
-			} else if i+1 < len(args) {
+			case i+1 < len(args):
 				result.RunFlags = append(result.RunFlags, arg, args[i+1])
 				i += 2
-			} else {
+			default:
 				result.RunFlags = append(result.RunFlags, arg)
 				i++
 			}
@@ -158,13 +160,8 @@ func ClassifyGoTestArgs(args []string) ClassifiedArgs {
 
 		// Unrecognized flag: pass to build (conservative — unknown flags
 		// are more likely build-related custom tooling than test binary flags).
-		if hasEquals {
-			result.BuildFlags = append(result.BuildFlags, arg)
-			i++
-		} else {
-			result.BuildFlags = append(result.BuildFlags, arg)
-			i++
-		}
+		result.BuildFlags = append(result.BuildFlags, arg)
+		i++
 	}
 
 	if needsCoverBuild {

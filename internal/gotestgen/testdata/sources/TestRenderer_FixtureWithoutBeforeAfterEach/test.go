@@ -6,7 +6,7 @@ import (
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
 
-type MinimalFixture struct {}
+type MinimalFixture struct{}
 
 func (f *MinimalFixture) BeforeAll(ctx context.Context) error { return nil }
 

@@ -25,9 +25,9 @@ type FixtureNode struct {
 	Init           func()
 	BeforeAll      func(ctx context.Context) error
 	AfterAll       func(ctx context.Context) error
-	SharedFixtures []SharedFixtureBinding  // deprecated: use SharedStateNode as DAG node
-	SharedState    *SharedStateNode        // non-nil for shared fixture nodes
-	Children       []*FixtureNode          // deprecated: use DependsOn with MainConfig.Fixtures
+	SharedFixtures []SharedFixtureBinding // deprecated: use SharedStateNode as DAG node
+	SharedState    *SharedStateNode       // non-nil for shared fixture nodes
+	Children       []*FixtureNode         // deprecated: use DependsOn with MainConfig.Fixtures
 	DependsOn      []string
 }
 

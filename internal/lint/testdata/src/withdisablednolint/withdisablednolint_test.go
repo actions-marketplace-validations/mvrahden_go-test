@@ -11,9 +11,10 @@ func TestInline(t *testing.T) {} //nolint:stdlib-test // want `stdlib test TestI
 //nolint:stdlib-test
 func TestAbove(t *testing.T) {} // want `stdlib test TestAbove — consider using a gotest suite`
 
-//nolint
+// nolint
 func TestBlanket(t *testing.T) {} // want `stdlib test TestBlanket — consider using a gotest suite`
 
-//nolint:stdlib-test
 // TestDocBlock verifies doc-block suppression is bypassed.
+//
+//nolint:stdlib-test
 func TestDocBlock(t *testing.T) {} // want `stdlib test TestDocBlock — consider using a gotest suite`

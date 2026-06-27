@@ -1,7 +1,7 @@
 package about_test
 
 import (
-	"github.com/mvrahden/go-test/about"
+	"github.com/mvrahden/go-test/internal/about"
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
 
@@ -16,7 +16,7 @@ func (s *GitTestSuite) TestPSuiteRegex(t *gotest.T) {
 			{"gosuite/gotest_psuite_test.go"},
 			{"gosuite/gotest_pxsuite_test.go"},
 		}) {
-			gotest.True(sub, about.PSuiteRegex.Match([]byte(tc.Name)))
+			gotest.Regexp(sub, about.PSuiteRegex, tc.Name)
 		}
 	})
 
@@ -30,7 +30,7 @@ func (s *GitTestSuite) TestPSuiteRegex(t *gotest.T) {
 			{"focus_suite/gotestgen_ptest.golden"},
 			{"focus_suite/gotestgen_pxtest.golden"},
 		}) {
-			gotest.False(sub, about.PSuiteRegex.Match([]byte(tc.Name)))
+			gotest.False(sub, about.PSuiteRegex.MatchString(tc.Name))
 		}
 	})
 }

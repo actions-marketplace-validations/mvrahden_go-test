@@ -74,4 +74,3 @@ func (s *GeneratorTestSuite) TestE2ENoTestSuites(t *gotest.T) {
 		}
 	})
 }
-

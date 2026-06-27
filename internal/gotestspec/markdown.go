@@ -120,4 +120,3 @@ func statusText(s Status) string {
 		return "—"
 	}
 }
-
