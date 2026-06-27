@@ -9,11 +9,11 @@ import (
 
 func TestParseTarget(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		wantPkg    string
-		wantType   string
-		wantErr    bool
+		name     string
+		input    string
+		wantPkg  string
+		wantType string
+		wantErr  bool
 	}{
 		{
 			name:     "simple package and type",

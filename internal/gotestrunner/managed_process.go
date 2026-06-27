@@ -10,7 +10,7 @@ import (
 type GraceStrategy int
 
 const (
-	GraceFixed  GraceStrategy = iota
+	GraceFixed GraceStrategy = iota
 	GraceBudget
 	GraceKill
 )
@@ -75,8 +75,8 @@ func (p *ManagedProcess) closeJob() {
 	}
 }
 
-func (p *ManagedProcess) Done() <-chan struct{}       { return p.done }
-func (p *ManagedProcess) Cmd() *exec.Cmd              { return p.cmd }
+func (p *ManagedProcess) Done() <-chan struct{} { return p.done }
+func (p *ManagedProcess) Cmd() *exec.Cmd        { return p.cmd }
 func (p *ManagedProcess) SetGraceDuration(d time.Duration) {
 	if d <= 0 {
 		return

@@ -16,8 +16,8 @@ import (
 
 // discoverOutput is the top-level JSON structure emitted by "gotest discover".
 type discoverOutput struct {
-	Packages []discoverPackage  `json:"packages"`
-	Warnings []discoverWarning  `json:"warnings,omitempty"`
+	Packages []discoverPackage `json:"packages"`
+	Warnings []discoverWarning `json:"warnings,omitempty"`
 }
 
 type discoverWarning struct {

@@ -31,11 +31,11 @@ type FixtureSpec struct {
 	n             ast.Node
 	ts            *ast.TypeSpec
 	typ           *types.Struct
-	Config        *types.Func      // FixtureConfig()/SharedFixtureConfig() method, may be nil
+	Config        *types.Func // FixtureConfig()/SharedFixtureConfig() method, may be nil
 	BeforeAll     *types.Func
-	AfterAll      *types.Func      // may be nil
-	BeforeEach    *types.Func      // may be nil
-	AfterEach     *types.Func      // may be nil
+	AfterAll      *types.Func   // may be nil
+	BeforeEach    *types.Func   // may be nil
+	AfterEach     *types.Func   // may be nil
 	Hydrate       *types.Func   // shared fixtures only, may be nil
 	Dehydrate     *types.Func   // shared fixtures only, may be nil
 	HydrateDecl   *ast.FuncDecl // AST for Hydrate body analysis, may be nil
@@ -307,4 +307,3 @@ func validateContextErrorSig(sig *types.Signature, methodID string) error {
 	}
 	return nil
 }
-

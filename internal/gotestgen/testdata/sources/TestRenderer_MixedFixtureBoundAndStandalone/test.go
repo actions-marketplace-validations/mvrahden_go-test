@@ -6,7 +6,7 @@ import (
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
 
-type AppFixture struct {}
+type AppFixture struct{}
 
 func (f *AppFixture) BeforeAll(ctx context.Context) error { return nil }
 
@@ -16,6 +16,6 @@ type BoundTestSuite struct {
 
 func (s *BoundTestSuite) TestBound(t *gotest.T) {}
 
-type StandaloneTestSuite struct {}
+type StandaloneTestSuite struct{}
 
 func (s *StandaloneTestSuite) TestFree(t *gotest.T) {}

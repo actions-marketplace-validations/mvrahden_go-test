@@ -16,6 +16,6 @@ type QueryTestSuite struct {
 	*DBFixture
 }
 
-func (s *QueryTestSuite) BeforeEach(t *gotest.T) *myCtx { return &myCtx{} }
-func (s *QueryTestSuite) AfterEach(t *gotest.T, ctx *myCtx) {}
+func (s *QueryTestSuite) BeforeEach(t *gotest.T) *myCtx      { return &myCtx{} }
+func (s *QueryTestSuite) AfterEach(t *gotest.T, ctx *myCtx)  {}
 func (s *QueryTestSuite) TestInsert(t *gotest.T, ctx *myCtx) {}

@@ -325,5 +325,3 @@ func collectTransitiveDepsRF(suiteID string, suiteFixtureFields map[string][]Fix
 	}
 	return needed
 }
-
-

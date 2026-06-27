@@ -243,4 +243,3 @@ func runSpecFromInput(input, format, output string, noColor bool) int {
 
 	return 0
 }
-

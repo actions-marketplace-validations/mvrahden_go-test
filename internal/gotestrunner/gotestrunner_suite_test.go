@@ -1005,7 +1005,6 @@ func capturePackageSummary(pkg string, failed bool, d time.Duration, verbose boo
 	return buf.String()
 }
 
-
 // --- output formatting tests ---
 
 func (s *GotestrunnerTestSuite) TestOutputFormatting(t *gotest.T) {
@@ -1216,12 +1215,12 @@ func (s *GotestrunnerTestSuite) TestSuiteRunFilter(t *gotest.T) {
 
 func (s *GotestrunnerTestSuite) TestComputeConcurrency(t *gotest.T) {
 	for sub, tc := range gotest.Each(t, []struct {
-		Name         string
-		budget       int
-		numSuites    int
-		gomaxprocs   int
-		wantInter    int
-		wantIntra    int
+		Name       string
+		budget     int
+		numSuites  int
+		gomaxprocs int
+		wantInter  int
+		wantIntra  int
 	}{
 		// Default budget (2×GOMAXPROCS), 4 cores
 		{"1 suite 4 cores", 8, 1, 4, 1, 8},

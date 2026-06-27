@@ -866,4 +866,3 @@ func (s *CmdGotestTestSuite) TestWatchHelpers(t *gotest.T) {
 		}
 	})
 }
-

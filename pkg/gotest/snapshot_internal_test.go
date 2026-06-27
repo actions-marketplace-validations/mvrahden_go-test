@@ -211,10 +211,13 @@ type mockT struct {
 	msg    string
 }
 
-func (m *mockT) Helper()                           {}
-func (m *mockT) FailNow()                          {}
-func (m *mockT) Name() string                      { return m.name }
-func (m *mockT) Errorf(format string, args ...any) { m.failed = true; m.msg = fmt.Sprintf(format, args...) }
+func (m *mockT) Helper()      {}
+func (m *mockT) FailNow()     {}
+func (m *mockT) Name() string { return m.name }
+func (m *mockT) Errorf(format string, args ...any) {
+	m.failed = true
+	m.msg = fmt.Sprintf(format, args...)
+}
 
 func TestReadAndRestore_SeekableReader(t *testing.T) {
 	r := strings.NewReader("test data")

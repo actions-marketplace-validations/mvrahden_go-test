@@ -346,7 +346,7 @@ func teardownDAG(fixtures []*FixtureNode, tracker *nodeTracker) bool {
 							mu.Unlock()
 						}
 					}
-					return  // shared state nodes don't have AfterAll in test process
+					return // shared state nodes don't have AfterAll in test process
 				}
 
 				if node.AfterAll != nil {
@@ -711,4 +711,3 @@ func (d *FixtureDAG) Teardown() bool {
 	})
 	return d.failed
 }
-

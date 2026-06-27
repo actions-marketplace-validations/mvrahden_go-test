@@ -37,8 +37,8 @@ type ResolvedFixture struct {
 	TransferFields []string // shared fixtures only
 	LocalFields    []string // shared fixtures only
 
-	Parent         *ResolvedFixture   // single parent (backward compat)
-	Parents        []*ResolvedFixture // all parent fixtures
+	Parent         *ResolvedFixture            // single parent (backward compat)
+	Parents        []*ResolvedFixture          // all parent fixtures
 	ParentFields   map[*ResolvedFixture]string // parent fixture → field name in this fixture's struct
 	Children       []*ResolvedFixture
 	SharedFixtures []SharedFixtureRef
@@ -76,8 +76,8 @@ type FixtureFieldBinding struct {
 // ResolveResult is the output of fixture resolution for a target package.
 type ResolveResult struct {
 	RootFixtures                   []*ResolvedFixture
-	AllFixtures                    []*ResolvedFixture       // topologically sorted, all fixtures
-	RequiredSharedFixtures         []SharedFixtureInfo      // deduplicated, for setup subprocess
+	AllFixtures                    []*ResolvedFixture  // topologically sorted, all fixtures
+	RequiredSharedFixtures         []SharedFixtureInfo // deduplicated, for setup subprocess
 	FixtureBound                   []*gotestast.TestSuiteSpec
 	Standalone                     []*gotestast.TestSuiteSpec
 	SuiteSharedFixtures            map[string][]SharedFixtureRef    // suite identifier → direct shared fixture refs
@@ -89,7 +89,7 @@ type resolver struct {
 	targetPkg     *packages.Package
 	localFixtures []*gotestast.FixtureSpec
 	resolved      map[*types.Named]*ResolvedFixture
-	resolving     map[*types.Named]bool // cycle detection
+	resolving     map[*types.Named]bool         // cycle detection
 	sharedSeen    map[string]*SharedFixtureInfo // key: pkgPath.Name
 	result        *ResolveResult
 }
@@ -332,9 +332,9 @@ func (r *resolver) resolveFixture(named *types.Named) (*ResolvedFixture, error) 
 	typePkg := named.Obj().Pkg()
 
 	rf := &ResolvedFixture{
-		Kind:       kind,
-		Identifier: identifier,
-		Named:      named,
+		Kind:         kind,
+		Identifier:   identifier,
+		Named:        named,
 		Pkg:          pkg,
 		Spec:         spec,
 		BeforeAll:    mset.Lookup(typePkg, "BeforeAll") != nil,

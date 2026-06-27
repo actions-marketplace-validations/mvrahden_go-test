@@ -9,8 +9,8 @@ type PGSharedFixture struct {
 	ConnStr string
 }
 
-func (f *PGSharedFixture) BeforeAll(ctx context.Context) error   { return nil }
-func (f *PGSharedFixture) Dehydrate(ctx context.Context) error   { return nil }
+func (f *PGSharedFixture) BeforeAll(ctx context.Context) error { return nil }
+func (f *PGSharedFixture) Dehydrate(ctx context.Context) error { return nil }
 
 type MyTestSuite struct{ *PGSharedFixture }
 

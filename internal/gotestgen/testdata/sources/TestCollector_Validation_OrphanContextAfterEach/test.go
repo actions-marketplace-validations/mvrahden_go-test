@@ -7,4 +7,4 @@ type myCtx struct{}
 type MyTestSuite struct{}
 
 func (s *MyTestSuite) AfterEach(t *gotest.T, ctx *myCtx) {}
-func (s *MyTestSuite) TestOne(t *gotest.T) {}
+func (s *MyTestSuite) TestOne(t *gotest.T)               {}

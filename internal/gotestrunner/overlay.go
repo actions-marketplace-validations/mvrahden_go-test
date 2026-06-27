@@ -17,16 +17,16 @@ import (
 )
 
 type OverlayResult struct {
-	CacheDir         string
-	WorkDir          string
-	OverlayFlag      string
-	SharedFixtures   []gotestgen.SharedFixtureInfo
-	SuitePackages    []string
-	NoSuitePackages  []string
-	SuitesByPkg      map[string][]string
-	DirsByPkg        map[string]string
-	SkippedSuitesByPkg              map[string][]string
-	FixtureDepSuites                map[string]map[string]bool
+	CacheDir                       string
+	WorkDir                        string
+	OverlayFlag                    string
+	SharedFixtures                 []gotestgen.SharedFixtureInfo
+	SuitePackages                  []string
+	NoSuitePackages                []string
+	SuitesByPkg                    map[string][]string
+	DirsByPkg                      map[string]string
+	SkippedSuitesByPkg             map[string][]string
+	FixtureDepSuites               map[string]map[string]bool
 	SuiteRequiredSharedFixtureKeys map[string]map[string][]string
 }
 
@@ -97,16 +97,16 @@ func GenerateOverlay(loaded []*gotestgen.LoadResult, debug bool, noCache bool) (
 	}
 
 	return &OverlayResult{
-		CacheDir:         cacheDir,
-		WorkDir:          workDir,
-		OverlayFlag:      "-overlay=" + filepath.Join(cacheDir, "overlay.json"),
-		SharedFixtures:   allSharedFixtures,
-		SuitePackages:    suitePkgs,
-		NoSuitePackages:  noSuitePkgs,
-		SuitesByPkg:      suitesByPkg,
-		DirsByPkg:        dirsByPkg,
-		SkippedSuitesByPkg:              skippedSuitesByPkg,
-		FixtureDepSuites:                fixtureDepSuites,
+		CacheDir:                       cacheDir,
+		WorkDir:                        workDir,
+		OverlayFlag:                    "-overlay=" + filepath.Join(cacheDir, "overlay.json"),
+		SharedFixtures:                 allSharedFixtures,
+		SuitePackages:                  suitePkgs,
+		NoSuitePackages:                noSuitePkgs,
+		SuitesByPkg:                    suitesByPkg,
+		DirsByPkg:                      dirsByPkg,
+		SkippedSuitesByPkg:             skippedSuitesByPkg,
+		FixtureDepSuites:               fixtureDepSuites,
 		SuiteRequiredSharedFixtureKeys: suiteReqKeys,
 	}, cleanup, nil
 }

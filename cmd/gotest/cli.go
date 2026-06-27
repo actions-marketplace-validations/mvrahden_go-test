@@ -293,4 +293,3 @@ func stripJSONFlag(args []string) (bool, []string) {
 	}
 	return found, out
 }
-

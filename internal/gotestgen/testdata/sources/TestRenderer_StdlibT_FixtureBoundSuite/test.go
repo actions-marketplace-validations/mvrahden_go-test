@@ -13,6 +13,6 @@ type StdlibTestSuite struct {
 	*DBFixture
 }
 
-func (s *StdlibTestSuite) BeforeAll(t *testing.T)  {}
-func (s *StdlibTestSuite) AfterEach(t *testing.T)  {}
-func (s *StdlibTestSuite) TestQuery(t *testing.T)  {}
+func (s *StdlibTestSuite) BeforeAll(t *testing.T) {}
+func (s *StdlibTestSuite) AfterEach(t *testing.T) {}
+func (s *StdlibTestSuite) TestQuery(t *testing.T) {}

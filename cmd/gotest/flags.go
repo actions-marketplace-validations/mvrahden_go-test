@@ -4,7 +4,7 @@ package main
 type FlagKind int
 
 const (
-	BoolFlag  FlagKind = iota + 1
+	BoolFlag FlagKind = iota + 1
 	ValueFlag
 )
 

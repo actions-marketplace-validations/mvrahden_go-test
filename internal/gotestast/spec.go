@@ -32,8 +32,8 @@ var (
 	IS_AFTER_ALL         = regexp.MustCompile(`^AfterAll$`)
 	IS_BEFORE_EACH       = regexp.MustCompile(`^BeforeEach$`)
 	IS_AFTER_EACH        = regexp.MustCompile(`^AfterEach$`)
-	IS_TEST_CASE       = &regexpW{regexp2.MustCompile(`^(?:X_|F_)?Test.+$`, regexp2.ECMAScript)} // matches all test cases
-	IS_TEST_CASE_ASYNC = regexp.MustCompile(`^(?:X_|F_)?Test.+Async$`)                          // matches all test cases with async suffix
+	IS_TEST_CASE         = &regexpW{regexp2.MustCompile(`^(?:X_|F_)?Test.+$`, regexp2.ECMAScript)} // matches all test cases
+	IS_TEST_CASE_ASYNC   = regexp.MustCompile(`^(?:X_|F_)?Test.+Async$`)                           // matches all test cases with async suffix
 )
 
 type TestSuiteSpecSet []*TestSuiteSpec
@@ -249,9 +249,9 @@ func (ts *TestSuiteSpec) ContextTypePkgPath() string {
 func (ts *TestSuiteSpec) IsGenericAlias() bool { return ts.underlyingTypeName != "" }
 
 func (ts *TestSuiteSpec) FileSet() *token.FileSet { return ts.pkg.Fset }
-func (ts *TestSuiteSpec) Pos() token.Pos           { return ts.ts.Name.Pos() }
-func (ts *TestSuiteSpec) IsFocused() bool           { return strings.HasPrefix(ts.ts.Name.Name, "F_") }
-func (ts *TestSuiteSpec) IsExcluded() bool          { return strings.HasPrefix(ts.ts.Name.Name, "X_") }
+func (ts *TestSuiteSpec) Pos() token.Pos          { return ts.ts.Name.Pos() }
+func (ts *TestSuiteSpec) IsFocused() bool         { return strings.HasPrefix(ts.ts.Name.Name, "F_") }
+func (ts *TestSuiteSpec) IsExcluded() bool        { return strings.HasPrefix(ts.ts.Name.Name, "X_") }
 
 // TypeSpecPos returns the token position of the test suite type name.
 func (ts *TestSuiteSpec) TypeSpecPos() token.Pos {
@@ -278,13 +278,13 @@ func NewTestSuiteSpecForTest(name, pkgName string, isGenericAlias bool) *TestSui
 }
 
 type TestSuiteHarness struct {
-	BeforeAll        *TestSuiteMethod
-	BeforeEach       *TestSuiteMethod
-	AfterAll         *TestSuiteMethod
-	AfterEach        *TestSuiteMethod
-	TestCases        []*TestSuiteMethod
-	Config           *types.Func // SuiteConfig() method, may be nil
-	Guard            *types.Func // SuiteGuard() method, may be nil
+	BeforeAll      *TestSuiteMethod
+	BeforeEach     *TestSuiteMethod
+	AfterAll       *TestSuiteMethod
+	AfterEach      *TestSuiteMethod
+	TestCases      []*TestSuiteMethod
+	Config         *types.Func // SuiteConfig() method, may be nil
+	Guard          *types.Func // SuiteGuard() method, may be nil
 	ConfigParallel bool
 }
 
@@ -326,7 +326,7 @@ func qualifier(pkg *types.Package) types.Qualifier {
 	}
 }
 
-func (m *TestSuiteMethod) Pos() token.Pos  { return m.n.Pos() }
+func (m *TestSuiteMethod) Pos() token.Pos   { return m.n.Pos() }
 func (m *TestSuiteMethod) IsFocused() bool  { return strings.HasPrefix(m.m.Name(), "F_") }
 func (m *TestSuiteMethod) IsExcluded() bool { return strings.HasPrefix(m.m.Name(), "X_") }
 
