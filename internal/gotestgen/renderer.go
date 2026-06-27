@@ -7,7 +7,7 @@ import (
 	"go/format"
 	"text/template"
 
-	"github.com/mvrahden/go-test/about"
+	"github.com/mvrahden/go-test/internal/about"
 	"github.com/mvrahden/go-test/internal/gotestast"
 	"github.com/mvrahden/go-test/internal/x/slices"
 	"golang.org/x/tools/go/packages"

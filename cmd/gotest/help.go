@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mvrahden/go-test/about"
+	"github.com/mvrahden/go-test/internal/about"
 )
 
 func containsHelpFlag(args []string) bool {

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mvrahden/go-test/about"
+	"github.com/mvrahden/go-test/internal/about"
 	"github.com/mvrahden/go-test/pkg/gotest"
 	"github.com/mvrahden/go-test/tests/e2e/internal/testutils"
 )

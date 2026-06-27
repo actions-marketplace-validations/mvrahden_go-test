@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mvrahden/go-test/about"
+	"github.com/mvrahden/go-test/internal/about"
 )
 
 func runClean(inv Invocation) int { //nolint:gocritic // hugeParam: stable API

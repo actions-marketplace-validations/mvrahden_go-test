@@ -1,7 +1,7 @@
 package about_test
 
 import (
-	"github.com/mvrahden/go-test/about"
+	"github.com/mvrahden/go-test/internal/about"
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
 
