@@ -71,6 +71,8 @@ func (s *LintTestSuite) TestParseNolint(t *gotest.T) {
 		wantRules map[lint.Rule]bool
 	}{
 		{"blanket nolint", "//nolint", true, nil},
+		{"blanket nolint with space", "// nolint", true, nil},
+		{"spaced nolint with rule", "// nolint:stdlib-test", true, map[lint.Rule]bool{lint.StdlibTest: true}},
 		{"single rule", "//nolint:stdlib-test", true, map[lint.Rule]bool{lint.StdlibTest: true}},
 		{"multiple rules", "//nolint:stdlib-test,testify", true, map[lint.Rule]bool{lint.StdlibTest: true, lint.Testify: true}},
 		{"with trailing comment", "//nolint:stdlib-test // legacy test", true, map[lint.Rule]bool{lint.StdlibTest: true}},

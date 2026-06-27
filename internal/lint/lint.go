@@ -148,10 +148,15 @@ func docSuppressed(doc *ast.CommentGroup, rule Rule) bool {
 }
 
 func parseNolint(text string) (rules map[Rule]bool, ok bool) {
-	if !strings.HasPrefix(text, "//nolint") {
+	var rest string
+	switch {
+	case strings.HasPrefix(text, "//nolint"):
+		rest = text[len("//nolint"):]
+	case strings.HasPrefix(text, "// nolint"):
+		rest = text[len("// nolint"):]
+	default:
 		return nil, false
 	}
-	rest := text[len("//nolint"):]
 	if rest == "" {
 		return nil, true
 	}
