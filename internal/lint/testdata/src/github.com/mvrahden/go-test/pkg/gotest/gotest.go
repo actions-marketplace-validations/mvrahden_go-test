@@ -15,9 +15,14 @@ func (r *R) Message() string       { return "" }
 
 type T struct{}
 
-func (t *T) Errorf(string, ...any) {}
+func (t *T) Errorf(string, ...any)  {}
 func (t *T) FailNow()              {}
+func (t *T) Skipf(string, ...any)  {}
+func (t *T) Setenv(string, string) {}
+func (t *T) TempDir() string       { return "" }
 func (t *T) T() *testing.T         { return nil }
+func (t *T) It(string, func(*T))   {}
+func (t *T) When(string, func(*T)) {}
 
 type testingT interface {
 	Errorf(format string, args ...any)

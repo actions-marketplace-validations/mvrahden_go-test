@@ -50,6 +50,18 @@ func (t *T) FailNow() {
 	t.t.FailNow()
 }
 
+func (t *T) Skipf(format string, args ...any) {
+	t.t.Skipf(format, args...)
+}
+
+func (t *T) Setenv(key, value string) {
+	t.t.Setenv(key, value)
+}
+
+func (t *T) TempDir() string {
+	return t.t.TempDir()
+}
+
 //go:noinline
 func execTestFn(testFn func(it *T), it *T) { testFn(it) }
 

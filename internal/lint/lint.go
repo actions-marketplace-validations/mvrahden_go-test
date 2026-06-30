@@ -32,6 +32,9 @@ const (
 	XLifecycle        Rule = "x-lifecycle"
 	AssertionSimplify Rule = "assertion-simplify"
 	SuiteCleanup      Rule = "suite-cleanup"
+	SuiteParallel     Rule = "suite-parallel"
+	SuiteSubtest      Rule = "suite-subtest"
+	TEscape           Rule = "t-escape"
 )
 
 // SkippableRules is the set of rules that support opt-out via skip flags.
@@ -70,6 +73,7 @@ func run(pass *analysis.Pass) (any, error) {
 		checkFocusPrefixes(pass, suites)
 		checkLifecyclePairs(pass, suites)
 		checkSuiteCleanup(pass, insp, suites)
+		checkSuiteDirectCalls(pass, insp, suites)
 	}
 
 	checkOrphanedFiles(pass)
@@ -77,6 +81,7 @@ func run(pass *analysis.Pass) (any, error) {
 	checkTestifyImports(pass)
 	checkPollScope(pass, insp)
 	checkAssertionSimplify(pass, insp)
+	checkTEscape(pass, insp)
 
 	return nil, nil
 }
@@ -402,6 +407,190 @@ func checkSuiteCleanup(pass *analysis.Pass, insp *inspector.Inspector, suites ma
 func reportCleanup(pass *analysis.Pass, pos token.Pos) {
 	report(pass, SuiteCleanup, pos,
 		"use AfterEach or AfterAll for cleanup — T.Cleanup bypasses suite lifecycle")
+}
+
+func checkSuiteDirectCalls(pass *analysis.Pass, insp *inspector.Inspector, suites map[string]*suiteInfo) {
+	insp.Preorder([]ast.Node{(*ast.FuncDecl)(nil)}, func(n ast.Node) {
+		fd := n.(*ast.FuncDecl)
+		if fd.Body == nil || fd.Recv == nil || len(fd.Recv.List) == 0 {
+			return
+		}
+		recvName := receiverTypeName(fd.Recv)
+		if _, ok := suites[recvName]; !ok {
+			return
+		}
+
+		tVars := map[string]bool{}
+
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			if _, ok := n.(*ast.FuncLit); ok {
+				return false
+			}
+			switch node := n.(type) {
+			case *ast.AssignStmt:
+				for i, rhs := range node.Rhs {
+					if i >= len(node.Lhs) {
+						break
+					}
+					if lhs, ok := node.Lhs[i].(*ast.Ident); ok && isTMethodCall(rhs) {
+						tVars[lhs.Name] = true
+					}
+				}
+			case *ast.CallExpr:
+				sel, ok := node.Fun.(*ast.SelectorExpr)
+				if !ok {
+					break
+				}
+				if !isTMethodCall(sel.X) {
+					if id, ok := sel.X.(*ast.Ident); !ok || !tVars[id.Name] {
+						break
+					}
+				}
+				switch sel.Sel.Name {
+				case "Parallel":
+					if len(node.Args) == 0 {
+						report(pass, SuiteParallel, node.Pos(),
+							"use SuiteConfig.Parallel instead — T.Parallel bypasses suite lifecycle coordination")
+					}
+				case "Run":
+					if len(node.Args) >= 2 {
+						report(pass, SuiteSubtest, node.Pos(),
+							"use It or When instead — T.Run bypasses gotest wrapping")
+					}
+				}
+			}
+			return true
+		})
+	})
+}
+
+var tEscapeMethods = map[string]bool{
+	"Errorf": true, "FailNow": true,
+	"Skipf": true, "Setenv": true, "TempDir": true,
+}
+
+var gotestAssertionFuncs = map[string]bool{
+	"True": true, "False": true,
+	"Equal": true, "NotEqual": true,
+	"Greater": true, "GreaterOrEqual": true,
+	"Less": true, "LessOrEqual": true,
+	"Zero": true, "NotZero": true,
+	"Empty": true, "NotEmpty": true,
+	"Len": true, "Contains": true, "NotContains": true,
+	"NoError": true, "Error": true,
+	"ErrorIs": true, "ErrorContains": true,
+	"Regexp": true, "MatchSnapshot": true,
+	"Eventually": true, "Consistently": true,
+}
+
+var tEscapeReportOnly = map[string]bool{
+	"Skip": true, "SkipNow": true,
+}
+
+func checkTEscape(pass *analysis.Pass, insp *inspector.Inspector) {
+	insp.Preorder([]ast.Node{(*ast.FuncDecl)(nil)}, func(n ast.Node) {
+		fd := n.(*ast.FuncDecl)
+		if fd.Body == nil {
+			return
+		}
+
+		tVars := map[string]bool{}
+
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.AssignStmt:
+				for i, rhs := range node.Rhs {
+					if i >= len(node.Lhs) {
+						break
+					}
+					if lhs, ok := node.Lhs[i].(*ast.Ident); ok && isTMethodCall(rhs) {
+						tVars[lhs.Name] = true
+					}
+				}
+			case *ast.CallExpr:
+				reportTEscape(pass, node, tVars)
+			}
+			return true
+		})
+	})
+}
+
+func reportTEscape(pass *analysis.Pass, call *ast.CallExpr, tVars map[string]bool) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return
+	}
+
+	if tEscapeMethods[sel.Sel.Name] || tEscapeReportOnly[sel.Sel.Name] {
+		isDirect := isTMethodCall(sel.X)
+		isAlias := false
+		if !isDirect {
+			if id, ok := sel.X.(*ast.Ident); ok && tVars[id.Name] {
+				isAlias = true
+			}
+		}
+		if isDirect || isAlias {
+			if tEscapeReportOnly[sel.Sel.Name] {
+				report(pass, TEscape, call.Pos(),
+					"Skipf is available on gotest.T — unnecessary T escape")
+				return
+			}
+			if isDirect {
+				inner := sel.X.(*ast.CallExpr)
+				innerSel := inner.Fun.(*ast.SelectorExpr)
+				reportWithFix(pass, TEscape, call.Pos(),
+					[]analysis.SuggestedFix{{
+						Message: fmt.Sprintf("call %s directly", sel.Sel.Name),
+						TextEdits: []analysis.TextEdit{{
+							Pos:     innerSel.X.End(),
+							End:     inner.End(),
+							NewText: []byte(""),
+						}},
+					}},
+					"%s is available on gotest.T — unnecessary T escape", sel.Sel.Name)
+			} else {
+				report(pass, TEscape, call.Pos(),
+					"%s is available on gotest.T — unnecessary T escape", sel.Sel.Name)
+			}
+			return
+		}
+	}
+
+	if gotestAssertionFuncs[sel.Sel.Name] && isGotestPkgRef(pass, sel.X) && len(call.Args) > 0 {
+		arg := call.Args[0]
+		if inner, ok := arg.(*ast.CallExpr); ok && isTMethodCall(inner) {
+			innerSel := inner.Fun.(*ast.SelectorExpr)
+			reportWithFix(pass, TEscape, inner.Pos(),
+				[]analysis.SuggestedFix{{
+					Message: "pass gotest.T directly",
+					TextEdits: []analysis.TextEdit{{
+						Pos:     innerSel.X.End(),
+						End:     inner.End(),
+						NewText: []byte(""),
+					}},
+				}},
+				"pass gotest.T directly to %s — unnecessary T escape", sel.Sel.Name)
+		} else if id, ok := arg.(*ast.Ident); ok && tVars[id.Name] {
+			report(pass, TEscape, arg.Pos(),
+				"pass gotest.T directly to %s — unnecessary T escape", sel.Sel.Name)
+		}
+	}
+}
+
+func isGotestPkgRef(pass *analysis.Pass, expr ast.Expr) bool {
+	id, ok := expr.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	obj := pass.TypesInfo.Uses[id]
+	if obj == nil {
+		return false
+	}
+	pkgName, ok := obj.(*types.PkgName)
+	if !ok {
+		return false
+	}
+	return pkgName.Imported().Path() == "github.com/mvrahden/go-test/pkg/gotest"
 }
 
 // --- cleanup reachability analysis ---
