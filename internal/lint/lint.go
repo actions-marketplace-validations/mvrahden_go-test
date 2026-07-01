@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -30,6 +31,7 @@ const (
 	TestSignature     Rule = "test-signature"
 	XLifecycle        Rule = "x-lifecycle"
 	AssertionSimplify Rule = "assertion-simplify"
+	TEscape           Rule = "t-escape"
 )
 
 // SkippableRules is the set of rules that support opt-out via skip flags.
@@ -74,6 +76,7 @@ func run(pass *analysis.Pass) (any, error) {
 	checkTestifyImports(pass)
 	checkPollScope(pass, insp)
 	checkAssertionSimplify(pass, insp)
+	checkTEscape(pass, insp, suites)
 
 	return nil, nil
 }
@@ -328,6 +331,496 @@ func checkLifecyclePairs(pass *analysis.Pass, suites map[string]*suiteInfo) {
 			report(pass, LifecyclePair, s.pos, "suite %s has BeforeAll but no AfterAll — resources may leak", s.name)
 		}
 	}
+}
+
+// --- t-escape and suite rule detection ---
+
+type escapeConfig struct {
+	rule       Rule
+	message    string
+	suiteOnly  bool
+	canAutofix bool
+}
+
+var escapeConfigs = map[string]escapeConfig{
+	"Errorf":   {TEscape, "Errorf is available on gotest.T — unnecessary T escape", false, true},
+	"FailNow":  {TEscape, "FailNow is available on gotest.T — unnecessary T escape", false, true},
+	"Skipf":    {TEscape, "Skipf is available on gotest.T — unnecessary T escape", false, true},
+	"Setenv":   {TEscape, "Setenv is available on gotest.T — unnecessary T escape", false, true},
+	"TempDir":  {TEscape, "TempDir is available on gotest.T — unnecessary T escape", false, true},
+	"Skip":     {TEscape, "must use Skipf instead — unnecessary T escape", false, false},
+	"SkipNow":  {TEscape, "must use Skipf instead — unnecessary T escape", false, false},
+	"Cleanup":  {TEscape, "use AfterEach or AfterAll for cleanup — T.Cleanup bypasses suite lifecycle", true, false},
+	"Parallel": {TEscape, "use SuiteConfig.Parallel instead — T.Parallel bypasses suite lifecycle coordination", true, false},
+	"Run":      {TEscape, "use It or When instead — T.Run bypasses gotest wrapping", true, false},
+}
+
+var gotestAssertionFuncs = map[string]bool{
+	"True": true, "False": true,
+	"Equal": true, "NotEqual": true,
+	"Greater": true, "GreaterOrEqual": true,
+	"Less": true, "LessOrEqual": true,
+	"Zero": true, "NotZero": true,
+	"Empty": true, "NotEmpty": true,
+	"Len": true, "Contains": true, "NotContains": true,
+	"NoError": true, "Error": true,
+	"ErrorIs": true, "ErrorContains": true,
+	"Regexp": true, "MatchSnapshot": true,
+	"Eventually": true, "Consistently": true,
+}
+
+type deferredReport struct {
+	rule    Rule
+	pos     token.Pos
+	message string
+}
+
+func checkTEscape(pass *analysis.Pass, insp *inspector.Inspector, suites map[string]*suiteInfo) {
+	mr := buildMethodReach(pass, insp, 5)
+	reported := map[token.Pos]bool{}
+	var deferred []deferredReport
+
+	insp.Preorder([]ast.Node{(*ast.FuncDecl)(nil)}, func(n ast.Node) {
+		fd := n.(*ast.FuncDecl)
+		if fd.Body == nil {
+			return
+		}
+
+		isSuiteMethod := false
+		if fd.Recv != nil && len(fd.Recv.List) > 0 {
+			_, isSuiteMethod = suites[receiverTypeName(fd.Recv)]
+		}
+
+		tVars := map[string]bool{}
+		gotestTVars := map[string]bool{}
+		if isSuiteMethod && fd.Type.Params != nil {
+			for _, field := range fd.Type.Params.List {
+				if isGotestTType(pass, field) {
+					for _, name := range field.Names {
+						gotestTVars[name.Name] = true
+					}
+				}
+			}
+		}
+
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.AssignStmt:
+				trackTVarAssign(node, tVars, gotestTVars)
+			case *ast.CallExpr:
+				reportDirectEscape(pass, node, isSuiteMethod, tVars, reported)
+				if isSuiteMethod {
+					collectInterproceduralEscape(node, tVars, gotestTVars, mr, &deferred)
+				}
+			}
+			return true
+		})
+	})
+
+	for _, d := range deferred {
+		if !reported[d.pos] {
+			reported[d.pos] = true
+			report(pass, d.rule, d.pos, "%s", d.message)
+		}
+	}
+}
+
+func trackTVarAssign(assign *ast.AssignStmt, tVars, gotestTVars map[string]bool) {
+	for i, rhs := range assign.Rhs {
+		if i >= len(assign.Lhs) {
+			break
+		}
+		lhsId, ok := assign.Lhs[i].(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if isTMethodCall(rhs) {
+			tVars[lhsId.Name] = true
+			continue
+		}
+		if id, ok := rhs.(*ast.Ident); ok {
+			if tVars[id.Name] {
+				tVars[lhsId.Name] = true
+			}
+			if gotestTVars[id.Name] {
+				gotestTVars[lhsId.Name] = true
+			}
+		}
+	}
+}
+
+func reportDirectEscape(pass *analysis.Pass, call *ast.CallExpr, isSuiteMethod bool, tVars map[string]bool, reported map[token.Pos]bool) {
+	sel, _ := call.Fun.(*ast.SelectorExpr)
+	if sel == nil {
+		return
+	}
+
+	if esc, ok := escapeConfigs[sel.Sel.Name]; ok {
+		if !esc.suiteOnly || isSuiteMethod {
+			isDirect := isTMethodCall(sel.X)
+			isAlias := false
+			if !isDirect {
+				if id, ok := sel.X.(*ast.Ident); ok && tVars[id.Name] {
+					isAlias = true
+				}
+			}
+			if isDirect || isAlias {
+				reported[call.Pos()] = true
+				if esc.canAutofix && isDirect {
+					inner := sel.X.(*ast.CallExpr)
+					innerSel := inner.Fun.(*ast.SelectorExpr)
+					reportWithFix(pass, esc.rule, call.Pos(),
+						[]analysis.SuggestedFix{{
+							Message: fmt.Sprintf("call %s directly", sel.Sel.Name),
+							TextEdits: []analysis.TextEdit{{
+								Pos:     innerSel.X.End(),
+								End:     inner.End(),
+								NewText: []byte(""),
+							}},
+						}},
+						"%s", esc.message)
+				} else {
+					report(pass, esc.rule, call.Pos(), "%s", esc.message)
+				}
+				return
+			}
+		}
+	}
+
+	if gotestAssertionFuncs[sel.Sel.Name] && isGotestPkgRef(pass, sel.X) && len(call.Args) > 0 {
+		arg := call.Args[0]
+		if inner, ok := arg.(*ast.CallExpr); ok && isTMethodCall(inner) {
+			reported[inner.Pos()] = true
+			innerSel := inner.Fun.(*ast.SelectorExpr)
+			reportWithFix(pass, TEscape, inner.Pos(),
+				[]analysis.SuggestedFix{{
+					Message: "pass gotest.T directly",
+					TextEdits: []analysis.TextEdit{{
+						Pos:     innerSel.X.End(),
+						End:     inner.End(),
+						NewText: []byte(""),
+					}},
+				}},
+				"pass gotest.T directly to %s — unnecessary T escape", sel.Sel.Name)
+			return
+		}
+		if id, ok := arg.(*ast.Ident); ok && tVars[id.Name] {
+			reported[arg.Pos()] = true
+			report(pass, TEscape, arg.Pos(),
+				"pass gotest.T directly to %s — unnecessary T escape", sel.Sel.Name)
+			return
+		}
+	}
+}
+
+func collectInterproceduralEscape(call *ast.CallExpr, tVars, gotestTVars map[string]bool, mr *methodReach, results *[]deferredReport) {
+	methods := mr.reachedMethods(call, tVars, gotestTVars)
+	for method, positions := range methods {
+		esc := escapeConfigs[method]
+		for pos := range positions {
+			*results = append(*results, deferredReport{esc.rule, pos, esc.message})
+		}
+	}
+}
+
+const gotestImportPath = "github.com/mvrahden/go-test/pkg/gotest"
+
+func isGotestPkgRef(pass *analysis.Pass, expr ast.Expr) bool {
+	id, ok := expr.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	obj := pass.TypesInfo.Uses[id]
+	if obj == nil {
+		return false
+	}
+	pkgName, ok := obj.(*types.PkgName)
+	if !ok {
+		return false
+	}
+	return pkgName.Imported().Path() == gotestImportPath
+}
+
+func isGotestTType(pass *analysis.Pass, field *ast.Field) bool {
+	typ := pass.TypesInfo.TypeOf(field.Type)
+	if typ == nil {
+		return false
+	}
+	ptr, ok := typ.(*types.Pointer)
+	if !ok {
+		return false
+	}
+	named, ok := ptr.Elem().(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	return obj.Name() == "T" && obj.Pkg() != nil && obj.Pkg().Path() == gotestImportPath
+}
+
+// --- interprocedural method reachability ---
+
+type callEdge struct {
+	callee *ast.FuncDecl
+	args   map[int]int // call arg position → caller's param index
+}
+
+// methodReach tracks which function parameters transitively lead to calls
+// of flagged methods, enabling interprocedural detection across helper chains.
+type methodReach struct {
+	pass      *analysis.Pass
+	funcDecls map[types.Object]*ast.FuncDecl
+	params    map[*ast.FuncDecl]map[int]map[string]map[token.Pos]bool
+	edges     map[*ast.FuncDecl][]callEdge
+}
+
+func buildMethodReach(pass *analysis.Pass, insp *inspector.Inspector, maxDepth int) *methodReach {
+	mr := &methodReach{
+		pass:      pass,
+		funcDecls: map[types.Object]*ast.FuncDecl{},
+		params:    map[*ast.FuncDecl]map[int]map[string]map[token.Pos]bool{},
+		edges:     map[*ast.FuncDecl][]callEdge{},
+	}
+
+	insp.Preorder([]ast.Node{(*ast.FuncDecl)(nil)}, func(n ast.Node) {
+		fd := n.(*ast.FuncDecl)
+		if fd.Body == nil || fd.Name == nil {
+			return
+		}
+		if obj := pass.TypesInfo.Defs[fd.Name]; obj != nil {
+			mr.funcDecls[obj] = fd
+		}
+	})
+
+	for _, fd := range mr.funcDecls {
+		mr.scanDirect(fd)
+	}
+	for range maxDepth {
+		if !mr.propagate() {
+			break
+		}
+	}
+
+	return mr
+}
+
+func (mr *methodReach) mark(fd *ast.FuncDecl, paramIdx int, method string, pos token.Pos) bool {
+	if mr.params[fd] == nil {
+		mr.params[fd] = map[int]map[string]map[token.Pos]bool{}
+	}
+	if mr.params[fd][paramIdx] == nil {
+		mr.params[fd][paramIdx] = map[string]map[token.Pos]bool{}
+	}
+	if mr.params[fd][paramIdx][method] == nil {
+		mr.params[fd][paramIdx][method] = map[token.Pos]bool{}
+	}
+	if mr.params[fd][paramIdx][method][pos] {
+		return false
+	}
+	mr.params[fd][paramIdx][method][pos] = true
+	return true
+}
+
+func (mr *methodReach) resolveCallee(call *ast.CallExpr) *ast.FuncDecl {
+	var ident *ast.Ident
+	switch fn := call.Fun.(type) {
+	case *ast.Ident:
+		ident = fn
+	case *ast.SelectorExpr:
+		ident = fn.Sel
+	}
+	if ident == nil {
+		return nil
+	}
+	obj := mr.pass.TypesInfo.Uses[ident]
+	if obj == nil {
+		return nil
+	}
+	return mr.funcDecls[obj]
+}
+
+func (mr *methodReach) scanDirect(fd *ast.FuncDecl) {
+	aliases := flattenParams(fd.Type.Params)
+	if len(aliases) == 0 {
+		return
+	}
+
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			trackParamFlow(node, aliases)
+		case *ast.CallExpr:
+			sel, ok := node.Fun.(*ast.SelectorExpr)
+			if ok {
+				if _, ok := escapeConfigs[sel.Sel.Name]; ok {
+					method := sel.Sel.Name
+					if id, ok := sel.X.(*ast.Ident); ok {
+						if idx, ok := aliases[id.Name]; ok {
+							mr.mark(fd, idx, method, node.Pos())
+						}
+					}
+					if isTMethodCall(sel.X) {
+						innerSel := sel.X.(*ast.CallExpr).Fun.(*ast.SelectorExpr)
+						if id, ok := innerSel.X.(*ast.Ident); ok {
+							if idx, ok := aliases[id.Name]; ok {
+								mr.mark(fd, idx, method, node.Pos())
+							}
+						}
+					}
+				}
+			}
+			if callee := mr.resolveCallee(node); callee != nil {
+				edge := callEdge{callee: callee, args: map[int]int{}}
+				for argIdx, arg := range node.Args {
+					if idx := exprToParamIdx(arg, aliases); idx >= 0 {
+						edge.args[argIdx] = idx
+					}
+				}
+				if len(edge.args) > 0 {
+					mr.edges[fd] = append(mr.edges[fd], edge)
+				}
+			}
+		}
+		return true
+	})
+}
+
+func (mr *methodReach) propagate() bool {
+	changed := false
+	for fd, edges := range mr.edges {
+		for _, edge := range edges {
+			calleeReach := mr.params[edge.callee]
+			if len(calleeReach) == 0 {
+				continue
+			}
+			for argIdx, callerParamIdx := range edge.args {
+				for method, positions := range calleeReach[argIdx] {
+					for pos := range positions {
+						if mr.mark(fd, callerParamIdx, method, pos) {
+							changed = true
+						}
+					}
+				}
+			}
+		}
+	}
+	return changed
+}
+
+func (mr *methodReach) reachedMethods(call *ast.CallExpr, tVars, gotestTVars map[string]bool) map[string]map[token.Pos]bool {
+	callee := mr.resolveCallee(call)
+	if callee == nil {
+		return nil
+	}
+	calleeReach := mr.params[callee]
+	if len(calleeReach) == 0 {
+		return nil
+	}
+	var methods map[string]map[token.Pos]bool
+	for argIdx, arg := range call.Args {
+		argMethods := calleeReach[argIdx]
+		if len(argMethods) == 0 {
+			continue
+		}
+		tainted := isTMethodCall(arg)
+		if !tainted {
+			if id, ok := arg.(*ast.Ident); ok {
+				tainted = tVars[id.Name] || gotestTVars[id.Name]
+			}
+		}
+		if tainted {
+			if methods == nil {
+				methods = map[string]map[token.Pos]bool{}
+			}
+			for method, positions := range argMethods {
+				if methods[method] == nil {
+					methods[method] = map[token.Pos]bool{}
+				}
+				for pos := range positions {
+					methods[method][pos] = true
+				}
+			}
+		}
+	}
+	return methods
+}
+
+// flattenParams returns a map from parameter name to its flattened index.
+func flattenParams(params *ast.FieldList) map[string]int {
+	if params == nil {
+		return nil
+	}
+	m := map[string]int{}
+	idx := 0
+	for _, field := range params.List {
+		if len(field.Names) == 0 {
+			idx++
+			continue
+		}
+		for _, name := range field.Names {
+			m[name.Name] = idx
+			idx++
+		}
+	}
+	return m
+}
+
+// trackParamFlow extends the alias map for direct assignments (x := param)
+// and .T() calls (x := param.T()).
+func trackParamFlow(assign *ast.AssignStmt, aliases map[string]int) {
+	for i, rhs := range assign.Rhs {
+		if i >= len(assign.Lhs) {
+			break
+		}
+		lhsId, ok := assign.Lhs[i].(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if id, ok := rhs.(*ast.Ident); ok {
+			if idx, ok := aliases[id.Name]; ok {
+				aliases[lhsId.Name] = idx
+			}
+			continue
+		}
+		if call, ok := rhs.(*ast.CallExpr); ok && isTMethodCall(call) {
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok {
+					if idx, ok := aliases[id.Name]; ok {
+						aliases[lhsId.Name] = idx
+					}
+				}
+			}
+		}
+	}
+}
+
+// exprToParamIdx returns the parameter index if the expression is a
+// parameter/alias ident or a .T() call on one. Returns -1 otherwise.
+func exprToParamIdx(expr ast.Expr, aliases map[string]int) int {
+	if id, ok := expr.(*ast.Ident); ok {
+		if idx, ok := aliases[id.Name]; ok {
+			return idx
+		}
+	}
+	if call, ok := expr.(*ast.CallExpr); ok && isTMethodCall(call) {
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok {
+				if idx, ok := aliases[id.Name]; ok {
+					return idx
+				}
+			}
+		}
+	}
+	return -1
+}
+
+func isTMethodCall(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 0 {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && sel.Sel.Name == "T"
 }
 
 func checkOrphanedFiles(pass *analysis.Pass) {

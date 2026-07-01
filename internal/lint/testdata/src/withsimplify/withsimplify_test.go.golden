@@ -77,11 +77,11 @@ func TestTrueLen(t *testing.T) {
 
 func TestTrueCalls(t *testing.T) {
 	s := "hello world"
-	gotest.Contains(t, s, "hello")          // want `use Contains instead of True for strings\.Contains call`
-	gotest.ErrorIs(t, errors.New("x"), nil) // want `use ErrorIs instead of True for errors\.Is call`
+	gotest.Contains(t, s, "hello")          // want `use Contains instead of True for strings.Contains call`
+	gotest.ErrorIs(t, errors.New("x"), nil) // want `use ErrorIs instead of True for errors.Is call`
 	re := regexp.MustCompile(".*")
 	gotest.Regexp(t, re, "hello") // want `use Regexp instead of True for MatchString call`
-	gotest.Equal(t, 1, 2)         // want `use Equal instead of True for reflect\.DeepEqual call`
+	gotest.Equal(t, 1, 2)         // want `use Equal instead of True for reflect.DeepEqual call`
 }
 
 // === True with negation ===
@@ -91,7 +91,7 @@ func TestTrueNegation(t *testing.T) {
 	gotest.False(t, b) // want `use False instead of True for negation`
 
 	s := "hello"
-	gotest.NotContains(t, s, "z") // want `use NotContains instead of True for negated strings\.Contains call`
+	gotest.NotContains(t, s, "z") // want `use NotContains instead of True for negated strings.Contains call`
 }
 
 // === False with binary comparisons ===
@@ -158,8 +158,8 @@ func TestFalseLen(t *testing.T) {
 
 func TestFalseCalls(t *testing.T) {
 	s := "hello world"
-	gotest.NotContains(t, s, "xyz") // want `use NotContains instead of False for strings\.Contains call`
-	gotest.NotEqual(t, 1, 2)        // want `use NotEqual instead of False for reflect\.DeepEqual call`
+	gotest.NotContains(t, s, "xyz") // want `use NotContains instead of False for strings.Contains call`
+	gotest.NotEqual(t, 1, 2)        // want `use NotEqual instead of False for reflect.DeepEqual call`
 }
 
 // === False with negation ===
@@ -169,7 +169,7 @@ func TestFalseNegation(t *testing.T) {
 	gotest.True(t, b) // want `use True instead of False for negation`
 
 	s := "hello"
-	gotest.Contains(t, s, "h") // want `use Contains instead of False for negated strings\.Contains call`
+	gotest.Contains(t, s, "h") // want `use Contains instead of False for negated strings.Contains call`
 }
 
 // === Equal with special values ===
@@ -297,7 +297,7 @@ func TestZeroError(t *testing.T) {
 
 func TestContainsErrMsg(t *testing.T) {
 	err := errors.New("something failed")
-	gotest.ErrorContains(t, err, "failed") // want `use ErrorContains instead of Contains for err\.Error\(\) contains check`
+	gotest.ErrorContains(t, err, "failed") // want `use ErrorContains instead of Contains for err.Error\(\) contains check`
 }
 
 // === Correct usage — no diagnostics ===
