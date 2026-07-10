@@ -46,6 +46,12 @@ func (s *LintTestSuite) TestAnalyzer(t *gotest.T) {
 		})
 	})
 
+	t.When("assertion redundant", func(w *gotest.T) {
+		w.It("detects redundant guard assertions before stronger ones", func(it *gotest.T) {
+			analysistest.RunWithSuggestedFixes(it.T(), testdata, lint.Analyzer, "withredundant")
+		})
+	})
+
 	t.When("suite cleanup", func(w *gotest.T) {
 		w.It("detects .T().Cleanup in suite methods", func(it *gotest.T) {
 			analysistest.Run(it.T(), testdata, lint.Analyzer, "withcleanup")

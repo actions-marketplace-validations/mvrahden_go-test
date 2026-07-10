@@ -31,8 +31,9 @@ const (
 	TestSignature     Rule = "test-signature"
 	XLifecycle        Rule = "x-lifecycle"
 	AssertionSimplify  Rule = "assertion-simplify"
-	AssertionTypeGuard Rule = "assertion-type-guard"
-	TEscape           Rule = "t-escape"
+	AssertionTypeGuard  Rule = "assertion-type-guard"
+	AssertionRedundant  Rule = "assertion-redundant"
+	TEscape             Rule = "t-escape"
 )
 
 // SkippableRules is the set of rules that support opt-out via skip flags.
@@ -77,6 +78,7 @@ func run(pass *analysis.Pass) (any, error) {
 	checkTestifyImports(pass)
 	checkPollScope(pass, insp)
 	checkAssertionSimplify(pass, insp)
+	checkRedundantAssertion(pass, insp)
 	checkTEscape(pass, insp, suites)
 
 	return nil, nil
