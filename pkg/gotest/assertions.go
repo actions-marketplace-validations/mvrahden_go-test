@@ -78,6 +78,45 @@ func includesElement(s, element any) (found, valid bool) {
 	return false, false
 }
 
+func isNil(object any) bool {
+	if object == nil {
+		return true
+	}
+	rv := reflect.ValueOf(object)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface,
+		reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+		return rv.IsNil()
+	}
+	return false
+}
+
+func isNilable(object any) bool {
+	if object == nil {
+		return true
+	}
+	rv := reflect.ValueOf(object)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface,
+		reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+		return true
+	}
+	return false
+}
+
+func isEmptyable(object any) bool {
+	if object == nil {
+		return true
+	}
+	rv := reflect.ValueOf(object)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Map, reflect.Array,
+		reflect.Chan, reflect.String, reflect.Ptr:
+		return true
+	}
+	return false
+}
+
 // isEmpty reports whether a value is considered empty: nil, zero-length
 // (slices, maps, arrays, channels, strings), or a pointer to an empty value.
 func isEmpty(object any) bool {
@@ -150,7 +189,7 @@ type regexpPattern interface {
 
 // --- public assertions (alphabetical) ---
 
-// Consistently polls fn for the entire waitFor duration, failing on the first assertion failure.
+// Consistently asserts that fn passes on every poll for the entire waitFor duration.
 func Consistently(t testingT, waitFor, tick time.Duration, fn func(poll *R)) {
 	timer := time.NewTimer(waitFor)
 	defer timer.Stop()
@@ -205,8 +244,14 @@ func ElementsMatch[V comparable](t testingT, listA, listB []V, msgAndArgs ...any
 	}
 }
 
-// Empty asserts that object is empty: nil, zero length, or a pointer to an empty value.
+// Empty asserts that object is empty: nil, zero-length, or a pointer to an empty value.
+// Applies to slices, maps, arrays, channels, strings, and pointers. Fails with a type
+// guard error for non-emptyable types (e.g. int, bool, func); use Nil or Zero instead.
 func Empty(t testingT, object any, msgAndArgs ...any) {
+	if !isEmptyable(object) {
+		fail(t, fmt.Sprintf("Empty: type %T cannot be empty; for nil checks, use Nil; for zero-value checks, use Zero", object), msgAndArgs)
+		return
+	}
 	if !isEmpty(object) {
 		fail(t, fmt.Sprintf("Empty failed:\n  object is not empty: %#v", object), msgAndArgs)
 	}
@@ -236,7 +281,12 @@ func ErrorAs[E error](t testingT, err error, msgAndArgs ...any) E {
 }
 
 // ErrorContains asserts that err is not nil and its message contains the given substring.
+// Fails with a type guard error when contains is empty; for non-nil error checks use Error.
 func ErrorContains(t testingT, err error, contains string, msgAndArgs ...any) {
+	if contains == "" {
+		fail(t, "ErrorContains: contains is empty; for non-nil error checks, use Error", msgAndArgs)
+		return
+	}
 	if err == nil {
 		fail(t, "ErrorContains failed:\n  expected an error but got nil", msgAndArgs)
 		return
@@ -247,13 +297,18 @@ func ErrorContains(t testingT, err error, contains string, msgAndArgs ...any) {
 }
 
 // ErrorIs asserts that errors.Is(err, target) is true.
+// Fails with a type guard error when target is nil; for nil error checks use NoError.
 func ErrorIs(t testingT, err, target error, msgAndArgs ...any) {
+	if target == nil {
+		fail(t, "ErrorIs: target is nil; for nil error checks, use NoError", msgAndArgs)
+		return
+	}
 	if !errors.Is(err, target) {
 		fail(t, fmt.Sprintf("ErrorIs failed:\n  error: %v\n  target: %v", err, target), msgAndArgs)
 	}
 }
 
-// Eventually polls fn until it passes without assertion failures, or fails after waitFor.
+// Eventually asserts that fn passes without assertion failures within waitFor, polling every tick.
 func Eventually(t testingT, waitFor, tick time.Duration, fn func(poll *R)) {
 	timer := time.NewTimer(waitFor)
 	defer timer.Stop()
@@ -279,7 +334,7 @@ func Eventually(t testingT, waitFor, tick time.Duration, fn func(poll *R)) {
 	}
 }
 
-// Fail immediately fails the test with the given message.
+// Fail immediately fails the test.
 func Fail(t testingT, msgAndArgs ...any) {
 	fail(t, "Fail", msgAndArgs)
 }
@@ -305,7 +360,7 @@ func GreaterOrEqual[V cmp.Ordered](t testingT, a, b V, msgAndArgs ...any) {
 	}
 }
 
-// InDelta asserts that expected and actual are within delta of each other.
+// InDelta asserts that expected and actual differ by at most delta.
 func InDelta[V numeric](t testingT, expected, actual V, delta float64, msgAndArgs ...any) {
 	diff := math.Abs(float64(expected) - float64(actual))
 	if math.IsNaN(diff) || diff > delta {
@@ -313,7 +368,7 @@ func InDelta[V numeric](t testingT, expected, actual V, delta float64, msgAndArg
 	}
 }
 
-// JSONEq asserts that expected and actual represent the same JSON structure.
+// JSONEq asserts that expected and actual represent the same JSON structure, ignoring key order.
 // Accepts string, []byte, json.RawMessage, io.Reader, or any JSON-marshalable value.
 func JSONEq(t testingT, expected, actual any, msgAndArgs ...any) {
 	expNorm, err := normalizeJSON(expected)
@@ -333,7 +388,7 @@ func JSONEq(t testingT, expected, actual any, msgAndArgs ...any) {
 	}
 }
 
-// Len asserts that object has the given length.
+// Len asserts that object has the given length. Applies to slices, arrays, maps, channels, and strings.
 func Len(t testingT, object any, length int, msgAndArgs ...any) {
 	if object == nil {
 		fail(t, fmt.Sprintf("Len failed:\n  object is nil, expected length %d", length), msgAndArgs)
@@ -383,10 +438,40 @@ func NotContains(t testingT, s, contains any, msgAndArgs ...any) {
 	}
 }
 
-// NotEmpty asserts that object is NOT empty. See Empty for the definition of emptiness.
+// Nil asserts that object is nil. Intended for non-comparable nilable types (slices, maps, funcs).
+// Fails with a type guard error for non-nilable types; for comparable nilables use Zero.
+func Nil(t testingT, object any, msgAndArgs ...any) {
+	if !isNilable(object) {
+		fail(t, fmt.Sprintf("Nil: type %T is not nilable; for zero-value checks, use Zero", object), msgAndArgs)
+		return
+	}
+	if !isNil(object) {
+		fail(t, fmt.Sprintf("Nil failed:\n  expected nil, got: %#v", object), msgAndArgs)
+	}
+}
+
+// NotEmpty asserts that object is NOT empty: not nil and non-zero length, or a pointer to a non-empty value.
+// Applies to slices, maps, arrays, channels, strings, and pointers. Fails with a type
+// guard error for non-emptyable types (e.g. int, bool, func); use NotNil or NotZero instead.
 func NotEmpty(t testingT, object any, msgAndArgs ...any) {
+	if !isEmptyable(object) {
+		fail(t, fmt.Sprintf("NotEmpty: type %T cannot be empty; for nil checks, use NotNil; for zero-value checks, use NotZero", object), msgAndArgs)
+		return
+	}
 	if isEmpty(object) {
 		fail(t, fmt.Sprintf("NotEmpty failed:\n  object is empty: %#v", object), msgAndArgs)
+	}
+}
+
+// NotNil asserts that object is not nil. Intended for non-comparable nilable types (slices, maps, funcs).
+// Fails with a type guard error for non-nilable types; for comparable nilables use NotZero.
+func NotNil(t testingT, object any, msgAndArgs ...any) {
+	if !isNilable(object) {
+		fail(t, fmt.Sprintf("NotNil: type %T is not nilable; for zero-value checks, use NotZero", object), msgAndArgs)
+		return
+	}
+	if isNil(object) {
+		fail(t, "NotNil failed:\n  expected a non-nil value", msgAndArgs)
 	}
 }
 
@@ -414,7 +499,7 @@ func Panics(t testingT, f func(), msgAndArgs ...any) any {
 	return recovered
 }
 
-// Regexp asserts that str matches the regular expression rx.
+// Regexp asserts that str matches the regular expression pattern rx (string or *regexp.Regexp).
 func Regexp[P regexpPattern](t testingT, rx P, str string, msgAndArgs ...any) {
 	var re *regexp.Regexp
 	switch v := any(rx).(type) {
@@ -456,7 +541,7 @@ func TimeIsNow(t testingT, ts time.Time, tolerance time.Duration, msgAndArgs ...
 	TimeWithin(t, time.Now(), ts, tolerance, msgAndArgs...)
 }
 
-// TimeWithin asserts that expected and actual are within the given tolerance of each other.
+// TimeWithin asserts that expected and actual are within tolerance of each other.
 func TimeWithin(t testingT, expected, actual time.Time, tolerance time.Duration, msgAndArgs ...any) {
 	diff := expected.Sub(actual)
 	if diff < 0 {

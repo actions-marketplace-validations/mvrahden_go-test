@@ -20,18 +20,20 @@ import (
 type Rule string
 
 const (
-	Focus             Rule = "focus"
-	Receiver          Rule = "receiver"
-	LifecycleTypo     Rule = "lifecycle-typo"
-	LifecyclePair     Rule = "lifecycle-pair"
-	GeneratedFile     Rule = "generated-file"
-	StdlibTest        Rule = "stdlib-test"
-	Testify           Rule = "testify"
-	PollScope         Rule = "poll-scope"
-	TestSignature     Rule = "test-signature"
-	XLifecycle        Rule = "x-lifecycle"
-	AssertionSimplify Rule = "assertion-simplify"
-	TEscape           Rule = "t-escape"
+	Focus              Rule = "focus"
+	Receiver           Rule = "receiver"
+	LifecycleTypo      Rule = "lifecycle-typo"
+	LifecyclePair      Rule = "lifecycle-pair"
+	GeneratedFile      Rule = "generated-file"
+	StdlibTest         Rule = "stdlib-test"
+	Testify            Rule = "testify"
+	PollScope          Rule = "poll-scope"
+	TestSignature      Rule = "test-signature"
+	XLifecycle         Rule = "x-lifecycle"
+	AssertionSimplify  Rule = "assertion-simplify"
+	AssertionTypeGuard Rule = "assertion-type-guard"
+	AssertionRedundant Rule = "assertion-redundant"
+	TEscape            Rule = "t-escape"
 )
 
 // SkippableRules is the set of rules that support opt-out via skip flags.
@@ -76,6 +78,7 @@ func run(pass *analysis.Pass) (any, error) {
 	checkTestifyImports(pass)
 	checkPollScope(pass, insp)
 	checkAssertionSimplify(pass, insp)
+	checkRedundantAssertion(pass, insp)
 	checkTEscape(pass, insp, suites)
 
 	return nil, nil
@@ -991,8 +994,10 @@ var pollScopeAssertionFuncs = map[string]bool{
 	"Eventually": true, "Fail": true, "False": true,
 	"Greater": true, "GreaterOrEqual": true, "InDelta": true,
 	"JSONEq": true, "Len": true, "Less": true,
-	"LessOrEqual": true, "MatchSnapshot": true, "NoError": true,
+	"LessOrEqual": true, "MatchSnapshot": true, "Nil": true,
+	"NoError":     true,
 	"NotContains": true, "NotEmpty": true, "NotEqual": true,
+	"NotNil":  true,
 	"NotZero": true, "Panics": true, "Regexp": true,
 	"Subset": true, "TimeIsNow": true, "TimeWithin": true,
 	"True": true, "Zero": true,

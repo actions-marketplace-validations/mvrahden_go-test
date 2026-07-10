@@ -44,6 +44,8 @@ func Zero(t testingT, value any, msgAndArgs ...any)                           {}
 func NotZero(t testingT, value any, msgAndArgs ...any)                        {}
 func Empty(t testingT, object any, msgAndArgs ...any)                         {}
 func NotEmpty(t testingT, object any, msgAndArgs ...any)                      {}
+func Nil(t testingT, object any, msgAndArgs ...any)                           {}
+func NotNil(t testingT, object any, msgAndArgs ...any)                        {}
 func Len(t testingT, object any, length int, msgAndArgs ...any)               {}
 func Contains(t testingT, s, contains any, msgAndArgs ...any)                 {}
 func NotContains(t testingT, s, contains any, msgAndArgs ...any)              {}
@@ -51,5 +53,6 @@ func NoError(t testingT, err error, msgAndArgs ...any)                        {}
 func Error(t testingT, err error, msgAndArgs ...any)                          {}
 func ErrorIs(t testingT, err, target error, msgAndArgs ...any)                {}
 func ErrorContains(t testingT, err error, contains string, msgAndArgs ...any) {}
+func ErrorAs(t testingT, err error, msgAndArgs ...any)                        {}
 func Regexp(t testingT, rx, str any, msgAndArgs ...any)                       {}
 func MatchSnapshot(t testingT, value any, name ...string)                     {}
