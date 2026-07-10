@@ -29,5 +29,6 @@ func (s *UserTestSuite) TestCreate(t *gotest.T) {
 
 func (s *UserTestSuite) TestDelete(t *gotest.T) {
 	gotest.NotNil(t, s.db)
+	gotest.ErrorContains(t, nil, "expected")
 }
 

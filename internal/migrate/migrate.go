@@ -300,6 +300,7 @@ func TransformFile(fset *token.FileSet, f *ast.File, plan MigrationPlan) {
 		"NoError":        "NoError",
 		"Error":          "Error",
 		"ErrorIs":        "ErrorIs",
+		"ErrorContains":  "ErrorContains",
 		"True":           "True",
 		"False":          "False",
 		"Nil":            "Nil",
