@@ -281,7 +281,12 @@ func ErrorAs[E error](t testingT, err error, msgAndArgs ...any) E {
 }
 
 // ErrorContains asserts that err is not nil and its message contains the given substring.
+// Fails with a type guard error when contains is empty; for non-nil error checks use Error.
 func ErrorContains(t testingT, err error, contains string, msgAndArgs ...any) {
+	if contains == "" {
+		fail(t, "ErrorContains: contains is empty; for non-nil error checks, use Error", msgAndArgs)
+		return
+	}
 	if err == nil {
 		fail(t, "ErrorContains failed:\n  expected an error but got nil", msgAndArgs)
 		return
@@ -292,7 +297,12 @@ func ErrorContains(t testingT, err error, contains string, msgAndArgs ...any) {
 }
 
 // ErrorIs asserts that errors.Is(err, target) is true.
+// Fails with a type guard error when target is nil; for nil error checks use NoError.
 func ErrorIs(t testingT, err, target error, msgAndArgs ...any) {
+	if target == nil {
+		fail(t, "ErrorIs: target is nil; for nil error checks, use NoError", msgAndArgs)
+		return
+	}
 	if !errors.Is(err, target) {
 		fail(t, fmt.Sprintf("ErrorIs failed:\n  error: %v\n  target: %v", err, target), msgAndArgs)
 	}

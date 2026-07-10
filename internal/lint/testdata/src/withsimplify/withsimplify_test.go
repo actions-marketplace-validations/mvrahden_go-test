@@ -84,8 +84,9 @@ func TestTrueLen(t *testing.T) {
 
 func TestTrueCalls(t *testing.T) {
 	s := "hello world"
-	gotest.True(t, strings.Contains(s, "hello"))    // want `use Contains instead of True for strings.Contains call`
-	gotest.True(t, errors.Is(errors.New("x"), nil)) // want `use ErrorIs instead of True for errors.Is call`
+	gotest.True(t, strings.Contains(s, "hello"))                    // want `use Contains instead of True for strings.Contains call`
+	gotest.True(t, errors.Is(errors.New("x"), nil))                 // want `use NoError instead of True for errors.Is nil check`
+	gotest.True(t, errors.Is(errors.New("x"), errors.New("target"))) // want `use ErrorIs instead of True for errors.Is call`
 	re := regexp.MustCompile(".*")
 	gotest.True(t, re.MatchString("hello")) // want `use Regexp instead of True for MatchString call`
 	gotest.True(t, reflect.DeepEqual(1, 2)) // want `use Equal instead of True for reflect.DeepEqual call`
@@ -170,8 +171,9 @@ func TestFalseLen(t *testing.T) {
 
 func TestFalseCalls(t *testing.T) {
 	s := "hello world"
-	gotest.False(t, strings.Contains(s, "xyz")) // want `use NotContains instead of False for strings.Contains call`
-	gotest.False(t, reflect.DeepEqual(1, 2))    // want `use NotEqual instead of False for reflect.DeepEqual call`
+	gotest.False(t, strings.Contains(s, "xyz"))      // want `use NotContains instead of False for strings.Contains call`
+	gotest.False(t, reflect.DeepEqual(1, 2))          // want `use NotEqual instead of False for reflect.DeepEqual call`
+	gotest.False(t, errors.Is(errors.New("x"), nil)) // want `use Error instead of False for errors.Is nil check`
 }
 
 // === False with negation ===
@@ -345,6 +347,10 @@ func TestCorrectUsage(t *testing.T) {
 
 	// Len with nil object — semantically different from Empty, no suggestion
 	gotest.Len(t, nil, 0)
+
+	// ErrorIs/ErrorContains with valid arguments — no suggestions
+	gotest.ErrorIs(t, err, errors.New("target"))
+	gotest.ErrorContains(t, err, "substr")
 }
 
 // === func type — now has suggestions ===
@@ -406,6 +412,18 @@ func TestEmptyTypeGuard(t *testing.T) {
 	var fn func()
 	gotest.Empty(t, fn)    // want `type func\(\) cannot be empty`
 	gotest.NotEmpty(t, fn) // want `type func\(\) cannot be empty`
+}
+
+// === ErrorIs / ErrorContains type guard ===
+
+func TestErrorIsTypeGuard(t *testing.T) {
+	var err error
+	gotest.ErrorIs(t, err, nil) // want `use NoError instead of ErrorIs for nil target`
+}
+
+func TestErrorContainsTypeGuard(t *testing.T) {
+	var err error
+	gotest.ErrorContains(t, err, "") // want `use Error instead of ErrorContains for empty contains string`
 }
 
 // === With message args — preserved in fix ===

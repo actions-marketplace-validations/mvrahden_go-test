@@ -50,6 +50,10 @@ func checkAssertionSimplify(pass *analysis.Pass, insp *inspector.Inspector) {
 			guardEmptyNotEmpty(pass, call, false)
 		case "NotEmpty":
 			guardEmptyNotEmpty(pass, call, true)
+		case "ErrorIs":
+			guardErrorIs(pass, call)
+		case "ErrorContains":
+			guardErrorContains(pass, call)
 		}
 	})
 }
@@ -219,8 +223,12 @@ func simplifyBoolCall(pass *analysis.Pass, call *ast.CallExpr, inner *ast.CallEx
 		return
 	}
 
-	if err, target, ok := isErrorsIs(inner); ok && !negated {
-		emitSimplify(pass, call, source, "ErrorIs", []ast.Expr{tArg, err, target}, msgArgs, "errors.Is call")
+	if err, target, ok := isErrorsIs(inner); ok {
+		if isNilIdent(target) {
+			emitSimplify(pass, call, source, pick(negated, "Error", "NoError"), []ast.Expr{tArg, err}, msgArgs, "errors.Is nil check")
+		} else if !negated {
+			emitSimplify(pass, call, source, "ErrorIs", []ast.Expr{tArg, err, target}, msgArgs, "errors.Is call")
+		}
 		return
 	}
 
@@ -405,6 +413,36 @@ func guardEmptyNotEmpty(pass *analysis.Pass, call *ast.CallExpr, isNot bool) {
 	}
 }
 
+// --- ErrorIs type guard ---
+
+func guardErrorIs(pass *analysis.Pass, call *ast.CallExpr) {
+	if len(call.Args) < 3 {
+		return
+	}
+	if !isNilIdent(call.Args[2]) {
+		return
+	}
+	tArg := call.Args[0]
+	err := call.Args[1]
+	msgArgs := call.Args[3:]
+	emitSimplify(pass, call, "ErrorIs", "NoError", []ast.Expr{tArg, err}, msgArgs, "nil target")
+}
+
+// --- ErrorContains type guard ---
+
+func guardErrorContains(pass *analysis.Pass, call *ast.CallExpr) {
+	if len(call.Args) < 3 {
+		return
+	}
+	if !isEmptyStringLit(call.Args[2]) {
+		return
+	}
+	tArg := call.Args[0]
+	err := call.Args[1]
+	msgArgs := call.Args[3:]
+	emitSimplify(pass, call, "ErrorContains", "Error", []ast.Expr{tArg, err}, msgArgs, "empty contains string")
+}
+
 // --- reporting ---
 
 func emitSimplify(pass *analysis.Pass, call *ast.CallExpr, from, to string, newArgs, msgArgs []ast.Expr, desc string) {
@@ -460,6 +498,11 @@ func extractBoolLiteral(a, b ast.Expr) (val bool, other ast.Expr, ok bool) {
 		return v, a, true
 	}
 	return false, nil, false
+}
+
+func isEmptyStringLit(expr ast.Expr) bool {
+	lit, ok := expr.(*ast.BasicLit)
+	return ok && lit.Kind == token.STRING && (lit.Value == `""` || lit.Value == "``")
 }
 
 func isIntLit(expr ast.Expr, want int) bool {

@@ -742,6 +742,19 @@ func (s *AssertionsTestSuite) TestErrorIs(t *gotest.T) {
 			gotest.True(it, m.Failed())
 		})
 	})
+
+	t.When("target is nil", func(w *gotest.T) {
+		w.It("fails with type guard", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.ErrorIs(r, errSentinel, nil) })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "target is nil")
+		})
+		w.It("fails with type guard even when err is nil", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.ErrorIs(r, nil, nil) })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "target is nil")
+		})
+	})
 }
 
 func (s *AssertionsTestSuite) TestErrorAs(t *gotest.T) {
@@ -797,6 +810,19 @@ func (s *AssertionsTestSuite) TestErrorContains(t *gotest.T) {
 		w.It("fails", func(it *gotest.T) {
 			m := gotest.Record(func(r *gotest.R) { gotest.ErrorContains(r, nil, "anything") })
 			gotest.True(it, m.Failed())
+		})
+	})
+
+	t.When("contains is empty", func(w *gotest.T) {
+		w.It("fails with type guard", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.ErrorContains(r, errors.New("x"), "") })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "contains is empty")
+		})
+		w.It("fails with type guard even when err is nil", func(it *gotest.T) {
+			m := gotest.Record(func(r *gotest.R) { gotest.ErrorContains(r, nil, "") })
+			gotest.True(it, m.Failed())
+			gotest.Contains(it, m.Message(), "contains is empty")
 		})
 	})
 }
