@@ -12,26 +12,26 @@ import (
 func TestErrorBeforeErrorIs(t *testing.T) {
 	err := errors.New("x")
 	target := errors.New("target")
-	gotest.Error(t, err)           // want `Error is redundant before ErrorIs`
+	gotest.Error(t, err) // want `Error is redundant before ErrorIs`
 	gotest.ErrorIs(t, err, target)
 }
 
 func TestErrorBeforeErrorContains(t *testing.T) {
 	err := errors.New("x")
-	gotest.Error(t, err)                // want `Error is redundant before ErrorContains`
+	gotest.Error(t, err) // want `Error is redundant before ErrorContains`
 	gotest.ErrorContains(t, err, "msg")
 }
 
 func TestErrorBeforeErrorAs(t *testing.T) {
 	err := errors.New("x")
-	gotest.Error(t, err)  // want `Error is redundant before ErrorAs`
+	gotest.Error(t, err) // want `Error is redundant before ErrorAs`
 	gotest.ErrorAs(t, err)
 }
 
 func TestErrorBeforeErrorIsWithMsg(t *testing.T) {
 	err := errors.New("x")
 	target := errors.New("target")
-	gotest.Error(t, err, "guard")      // want `Error is redundant before ErrorIs`
+	gotest.Error(t, err, "guard") // want `Error is redundant before ErrorIs`
 	gotest.ErrorIs(t, err, target)
 }
 
@@ -39,7 +39,7 @@ func TestErrorBeforeErrorIsWithMsg(t *testing.T) {
 
 func TestNotNilBeforeNotEmpty(t *testing.T) {
 	var s []int
-	gotest.NotNil(t, s)   // want `NotNil is redundant before NotEmpty`
+	gotest.NotNil(t, s) // want `NotNil is redundant before NotEmpty`
 	gotest.NotEmpty(t, s)
 }
 
@@ -51,7 +51,7 @@ func TestNotNilBeforeLenPositive(t *testing.T) {
 
 func TestNotNilBeforeContains(t *testing.T) {
 	s := []int{1, 2, 3}
-	gotest.NotNil(t, s)     // want `NotNil is redundant before Contains`
+	gotest.NotNil(t, s) // want `NotNil is redundant before Contains`
 	gotest.Contains(t, s, 1)
 }
 
@@ -65,7 +65,7 @@ func TestNotEmptyBeforeLenPositive(t *testing.T) {
 
 func TestNotEmptyBeforeContains(t *testing.T) {
 	s := []int{1, 2, 3}
-	gotest.NotEmpty(t, s)    // want `NotEmpty is redundant before Contains`
+	gotest.NotEmpty(t, s) // want `NotEmpty is redundant before Contains`
 	gotest.Contains(t, s, 1)
 }
 

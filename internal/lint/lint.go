@@ -20,20 +20,20 @@ import (
 type Rule string
 
 const (
-	Focus             Rule = "focus"
-	Receiver          Rule = "receiver"
-	LifecycleTypo     Rule = "lifecycle-typo"
-	LifecyclePair     Rule = "lifecycle-pair"
-	GeneratedFile     Rule = "generated-file"
-	StdlibTest        Rule = "stdlib-test"
-	Testify           Rule = "testify"
-	PollScope         Rule = "poll-scope"
-	TestSignature     Rule = "test-signature"
-	XLifecycle        Rule = "x-lifecycle"
+	Focus              Rule = "focus"
+	Receiver           Rule = "receiver"
+	LifecycleTypo      Rule = "lifecycle-typo"
+	LifecyclePair      Rule = "lifecycle-pair"
+	GeneratedFile      Rule = "generated-file"
+	StdlibTest         Rule = "stdlib-test"
+	Testify            Rule = "testify"
+	PollScope          Rule = "poll-scope"
+	TestSignature      Rule = "test-signature"
+	XLifecycle         Rule = "x-lifecycle"
 	AssertionSimplify  Rule = "assertion-simplify"
-	AssertionTypeGuard  Rule = "assertion-type-guard"
-	AssertionRedundant  Rule = "assertion-redundant"
-	TEscape             Rule = "t-escape"
+	AssertionTypeGuard Rule = "assertion-type-guard"
+	AssertionRedundant Rule = "assertion-redundant"
+	TEscape            Rule = "t-escape"
 )
 
 // SkippableRules is the set of rules that support opt-out via skip flags.
@@ -995,9 +995,9 @@ var pollScopeAssertionFuncs = map[string]bool{
 	"Greater": true, "GreaterOrEqual": true, "InDelta": true,
 	"JSONEq": true, "Len": true, "Less": true,
 	"LessOrEqual": true, "MatchSnapshot": true, "Nil": true,
-	"NoError": true,
+	"NoError":     true,
 	"NotContains": true, "NotEmpty": true, "NotEqual": true,
-	"NotNil": true,
+	"NotNil":  true,
 	"NotZero": true, "Panics": true, "Regexp": true,
 	"Subset": true, "TimeIsNow": true, "TimeWithin": true,
 	"True": true, "Zero": true,

@@ -84,8 +84,8 @@ func TestTrueLen(t *testing.T) {
 
 func TestTrueCalls(t *testing.T) {
 	s := "hello world"
-	gotest.True(t, strings.Contains(s, "hello"))                    // want `use Contains instead of True for strings.Contains call`
-	gotest.True(t, errors.Is(errors.New("x"), nil))                 // want `use NoError instead of True for errors.Is nil check`
+	gotest.True(t, strings.Contains(s, "hello"))                     // want `use Contains instead of True for strings.Contains call`
+	gotest.True(t, errors.Is(errors.New("x"), nil))                  // want `use NoError instead of True for errors.Is nil check`
 	gotest.True(t, errors.Is(errors.New("x"), errors.New("target"))) // want `use ErrorIs instead of True for errors.Is call`
 	re := regexp.MustCompile(".*")
 	gotest.True(t, re.MatchString("hello")) // want `use Regexp instead of True for MatchString call`
@@ -172,7 +172,7 @@ func TestFalseLen(t *testing.T) {
 func TestFalseCalls(t *testing.T) {
 	s := "hello world"
 	gotest.False(t, strings.Contains(s, "xyz"))      // want `use NotContains instead of False for strings.Contains call`
-	gotest.False(t, reflect.DeepEqual(1, 2))          // want `use NotEqual instead of False for reflect.DeepEqual call`
+	gotest.False(t, reflect.DeepEqual(1, 2))         // want `use NotEqual instead of False for reflect.DeepEqual call`
 	gotest.False(t, errors.Is(errors.New("x"), nil)) // want `use Error instead of False for errors.Is nil check`
 }
 
@@ -357,12 +357,12 @@ func TestCorrectUsage(t *testing.T) {
 
 func TestFuncNilComparison(t *testing.T) {
 	var fn func()
-	gotest.True(t, fn == nil)      // want `use Nil instead of True for nil check`
-	gotest.True(t, fn != nil)      // want `use NotNil instead of True for nil check`
-	gotest.False(t, fn == nil)     // want `use NotNil instead of False for nil check`
-	gotest.False(t, fn != nil)     // want `use Nil instead of False for nil check`
-	gotest.Equal(t, nil, fn)       // want `use Nil instead of Equal for nil comparison`
-	gotest.NotEqual(t, nil, fn)    // want `use NotNil instead of NotEqual for nil comparison`
+	gotest.True(t, fn == nil)   // want `use Nil instead of True for nil check`
+	gotest.True(t, fn != nil)   // want `use NotNil instead of True for nil check`
+	gotest.False(t, fn == nil)  // want `use NotNil instead of False for nil check`
+	gotest.False(t, fn != nil)  // want `use Nil instead of False for nil check`
+	gotest.Equal(t, nil, fn)    // want `use Nil instead of Equal for nil comparison`
+	gotest.NotEqual(t, nil, fn) // want `use NotNil instead of NotEqual for nil comparison`
 }
 
 // === Nil/NotNil type guard ===

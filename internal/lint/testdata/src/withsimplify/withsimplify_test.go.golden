@@ -82,8 +82,8 @@ func TestTrueLen(t *testing.T) {
 
 func TestTrueCalls(t *testing.T) {
 	s := "hello world"
-	gotest.Contains(t, s, "hello")                                   // want `use Contains instead of True for strings.Contains call`
-	gotest.NoError(t, errors.New("x"))                               // want `use NoError instead of True for errors.Is nil check`
+	gotest.Contains(t, s, "hello")                           // want `use Contains instead of True for strings.Contains call`
+	gotest.NoError(t, errors.New("x"))                       // want `use NoError instead of True for errors.Is nil check`
 	gotest.ErrorIs(t, errors.New("x"), errors.New("target")) // want `use ErrorIs instead of True for errors.Is call`
 	re := regexp.MustCompile(".*")
 	gotest.Regexp(t, re, "hello") // want `use Regexp instead of True for MatchString call`
@@ -169,8 +169,8 @@ func TestFalseLen(t *testing.T) {
 
 func TestFalseCalls(t *testing.T) {
 	s := "hello world"
-	gotest.NotContains(t, s, "xyz")       // want `use NotContains instead of False for strings.Contains call`
-	gotest.NotEqual(t, 1, 2)              // want `use NotEqual instead of False for reflect.DeepEqual call`
+	gotest.NotContains(t, s, "xyz")  // want `use NotContains instead of False for strings.Contains call`
+	gotest.NotEqual(t, 1, 2)         // want `use NotEqual instead of False for reflect.DeepEqual call`
 	gotest.Error(t, errors.New("x")) // want `use Error instead of False for errors.Is nil check`
 }
 
