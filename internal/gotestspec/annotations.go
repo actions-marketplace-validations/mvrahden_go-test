@@ -68,18 +68,10 @@ func resolveAnnotationPath(file, pkgDir string) string {
 	if len(file) == 0 {
 		return file
 	}
-	if file[0] != '/' && !(len(file) > 1 && file[1] == ':') {
-		if pkgDir != "" {
-			return pkgDir + "/" + file
-		}
-		return file
-	}
 	if pkgDir != "" {
-		if idx := strings.Index(file, "/"+pkgDir+"/"); idx >= 0 {
-			return file[idx+1:]
-		}
+		return pkgDir + "/" + file
 	}
-	return filepath.Base(file)
+	return file
 }
 
 func diagnosticTitle(output []string) string {
@@ -189,9 +181,31 @@ func gatherMessage(lines []string, fromIdx int) string {
 			allMsgs = append(allMsgs, rest)
 		} else if rm != "" {
 			allMsgs = append(allMsgs, rm)
+		} else if rf != "" {
+			allMsgs = append(allMsgs, rest)
 		}
 	}
-	return strings.Join(allMsgs, "\n")
+	return stripStdlibFrames(strings.Join(allMsgs, "\n"))
+}
+
+func stripStdlibFrames(msg string) string {
+	lines := strings.Split(msg, "\n")
+	out := lines[:0]
+	for i := 0; i < len(lines); i++ {
+		if i+1 < len(lines) {
+			f, _, _ := parseFileLine(lines[i+1])
+			if f != "" && (isStdlibFile(f) || isTestMainFile(f)) {
+				i++
+				continue
+			}
+		}
+		out = append(out, lines[i])
+	}
+	return strings.Join(out, "\n")
+}
+
+func isTestMainFile(file string) bool {
+	return file == "_testmain.go" || strings.HasSuffix(file, "/_testmain.go")
 }
 
 func parseFileLine(s string) (file string, line int, message string) {
@@ -244,5 +258,11 @@ func resolveBasename(file string) string {
 }
 
 func isStdlibFile(file string) bool {
-	return strings.Contains(file, "/go/src/") || strings.Contains(file, "/go/pkg/")
+	idx := strings.LastIndex(file, "/src/")
+	if idx < 0 {
+		return false
+	}
+	after := file[idx+5:]
+	seg, _, _ := strings.Cut(after, "/")
+	return seg != "" && !strings.Contains(seg, ".")
 }
