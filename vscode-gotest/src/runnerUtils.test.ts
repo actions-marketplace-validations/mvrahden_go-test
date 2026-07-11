@@ -959,30 +959,26 @@ describe("applyEvent", () => {
     const { controller, run, pkgItem } = makeApplyEventFixture();
     const outputMap = new Map<string, string>();
 
-    applyEvent(
-      controller as any,
-      run as any,
-      {
-        Action: "output",
-        Package: "example.com/pkg",
-        Output: "WARNING: DATA RACE\n",
-      } as any,
-      outputMap,
-      "example.com/pkg",
-      "/some/dir",
-    );
-    applyEvent(
-      controller as any,
-      run as any,
-      {
-        Action: "output",
-        Package: "example.com/pkg",
-        Output: "Read at 0x00c00001c0f0 by goroutine 7:\n",
-      } as any,
-      outputMap,
-      "example.com/pkg",
-      "/some/dir",
-    );
+    const outputLines = [
+      "WARNING: DATA RACE\n",
+      "Read at 0x00c00001c0f0 by goroutine 7:\n",
+      "  example.com/pkg.(*Foo).Bar()\n",
+      "      /some/dir/foo.go:42 +0x1a4\n",
+    ];
+    for (const line of outputLines) {
+      applyEvent(
+        controller as any,
+        run as any,
+        {
+          Action: "output",
+          Package: "example.com/pkg",
+          Output: line,
+        } as any,
+        outputMap,
+        "example.com/pkg",
+        "/some/dir",
+      );
+    }
 
     const result = applyEvent(
       controller as any,
@@ -1003,6 +999,9 @@ describe("applyEvent", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].message).toContain("WARNING: DATA RACE");
     expect(messages[0].message).toContain("Read at 0x00c00001c0f0");
+    expect(messages[0].location).toBeDefined();
+    expect(messages[0].location.uri.fsPath).toBe("/some/dir/foo.go");
+    expect(messages[0].location.range.line).toBe(41);
   });
 
   it("shows fallback message on package fail with no output", () => {

@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import type { GoTestController } from "./testController.js";
 import type { DiscoveryCache } from "./discovery.js";
 import {
+  extractDiagnosticLocation,
   extractTestMessages,
   parseExpectedActual,
   type TestEvent,
@@ -255,11 +256,15 @@ export function applyEvent(
       if (pkgItem) {
         if (event.Action === "fail") {
           const output = outputMap.get("") ?? "";
-          run.failed(
-            pkgItem,
-            [new vscode.TestMessage(output || "Package failed")],
-            duration,
-          );
+          const message = new vscode.TestMessage(output || "Package failed");
+          const loc = extractDiagnosticLocation(output, pkgDir);
+          if (loc) {
+            message.location = new vscode.Location(
+              vscode.Uri.file(loc.file),
+              new vscode.Position(loc.line - 1, 0),
+            );
+          }
+          run.failed(pkgItem, [message], duration);
         } else if (event.Action === "pass") {
           run.passed(pkgItem, duration);
         } else {
