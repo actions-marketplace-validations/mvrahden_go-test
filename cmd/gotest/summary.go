@@ -225,6 +225,11 @@ func runSummaryFromInput(input, format, output, coverageProfile string, noColor,
 	if stats.Failed > 0 {
 		return 1
 	}
+	for _, pkg := range tree {
+		if pkg.Status == gotestspec.StatusFail {
+			return 1
+		}
+	}
 	return 0
 }
 
