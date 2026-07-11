@@ -223,9 +223,10 @@ export function applyEvent(
   importPath: string,
   pkgDir: string,
 ): AppliedResult | undefined {
-  if (event.Action === "output" && event.Test) {
-    const existing = outputMap.get(event.Test) ?? "";
-    outputMap.set(event.Test, existing + (event.Output ?? ""));
+  if (event.Action === "output") {
+    const key = event.Test ?? "";
+    const existing = outputMap.get(key) ?? "";
+    outputMap.set(key, existing + (event.Output ?? ""));
   }
 
   if (event.Action === "output" && event.Output) {
@@ -253,7 +254,12 @@ export function applyEvent(
       const pkgItem = controller.findItem(importPath);
       if (pkgItem) {
         if (event.Action === "fail") {
-          run.failed(pkgItem, [], duration);
+          const output = outputMap.get("") ?? "";
+          run.failed(
+            pkgItem,
+            [new vscode.TestMessage(output || "Package failed")],
+            duration,
+          );
         } else if (event.Action === "pass") {
           run.passed(pkgItem, duration);
         } else {

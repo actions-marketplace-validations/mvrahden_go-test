@@ -954,6 +954,75 @@ describe("applyEvent", () => {
 
     expect(run.appendOutput).not.toHaveBeenCalled();
   });
+
+  it("accumulates package-level output and attaches as message on fail", () => {
+    const { controller, run, pkgItem } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+
+    applyEvent(
+      controller as any,
+      run as any,
+      {
+        Action: "output",
+        Package: "example.com/pkg",
+        Output: "WARNING: DATA RACE\n",
+      } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+    applyEvent(
+      controller as any,
+      run as any,
+      {
+        Action: "output",
+        Package: "example.com/pkg",
+        Output: "Read at 0x00c00001c0f0 by goroutine 7:\n",
+      } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    const result = applyEvent(
+      controller as any,
+      run as any,
+      { Action: "fail", Package: "example.com/pkg", Elapsed: 1.2 } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(result).toEqual({
+      itemId: "example.com/pkg",
+      status: "fail",
+      duration: 1200,
+    });
+    expect(run.failed).toHaveBeenCalledTimes(1);
+    const messages = run.failed.mock.calls[0][1];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].message).toContain("WARNING: DATA RACE");
+    expect(messages[0].message).toContain("Read at 0x00c00001c0f0");
+  });
+
+  it("shows fallback message on package fail with no output", () => {
+    const { controller, run, pkgItem } = makeApplyEventFixture();
+    const outputMap = new Map<string, string>();
+
+    applyEvent(
+      controller as any,
+      run as any,
+      { Action: "fail", Package: "example.com/pkg", Elapsed: 0.5 } as any,
+      outputMap,
+      "example.com/pkg",
+      "/some/dir",
+    );
+
+    expect(run.failed).toHaveBeenCalledTimes(1);
+    const messages = run.failed.mock.calls[0][1];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].message).toBe("Package failed");
+  });
 });
 
 describe("computeWildcard", () => {
