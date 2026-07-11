@@ -62,6 +62,97 @@ func TestParseFileLine(t *testing.T) {
 	}
 }
 
+func TestParseFileLine_StackTraceFormat(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		file    string
+		line    int
+		message string
+	}{
+		{
+			name:  "race detector format with hex offset",
+			input: "      /path/to/foo_test.go:18 +0x7b",
+			file:  "foo_test.go",
+			line:  18,
+		},
+		{
+			name:  "panic stack with tab indent",
+			input: "\t/path/to/bar_test.go:12 +0x45",
+			file:  "bar_test.go",
+			line:  12,
+		},
+		{
+			name:  "stack frame without offset",
+			input: "      baz_test.go:42",
+			file:  "baz_test.go",
+			line:  42,
+		},
+		{
+			name:  "stdlib path detected",
+			input: "\t/usr/local/go/src/runtime/panic.go:1181 +0x18",
+			file:  "/usr/local/go/src/runtime/panic.go",
+			line:  1181,
+		},
+		{
+			name:    "standard format still works",
+			input:   "foo_test.go:42: expected 1, got 2",
+			file:    "foo_test.go",
+			line:    42,
+			message: "expected 1, got 2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file, line, msg := parseFileLine(tt.input)
+			if file != tt.file {
+				t.Errorf("file = %q, want %q", file, tt.file)
+			}
+			if line != tt.line {
+				t.Errorf("line = %d, want %d", line, tt.line)
+			}
+			if msg != tt.message {
+				t.Errorf("message = %q, want %q", msg, tt.message)
+			}
+		})
+	}
+}
+
+func TestParseFirstLocation_PrefersUserCode(t *testing.T) {
+	lines := []string{
+		"fatal error: concurrent map writes",
+		"",
+		"goroutine 8 [running]:",
+		"internal/runtime/maps.fatal({0x589a33?, 0x0?})",
+		"\t/usr/local/go/src/runtime/panic.go:1181 +0x18",
+		"example.TestConcurrentMapWrite.func1()",
+		"\t/home/user/project/foo_test.go:12 +0x45",
+	}
+
+	file, line, _ := parseFirstLocation(lines)
+	if file != "foo_test.go" {
+		t.Errorf("file = %q, want foo_test.go (should skip stdlib)", file)
+	}
+	if line != 12 {
+		t.Errorf("line = %d, want 12", line)
+	}
+}
+
+func TestParseFirstLocation_FallsBackToStdlib(t *testing.T) {
+	lines := []string{
+		"\t/usr/local/go/src/runtime/panic.go:1181 +0x18",
+	}
+
+	file, line, _ := parseFirstLocation(lines)
+	if file == "" {
+		t.Error("should fall back to stdlib path when no user code found")
+	}
+	if line != 1181 {
+		t.Errorf("line = %d, want 1181", line)
+	}
+}
+
 func TestPackageDir(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -190,6 +281,38 @@ func TestCollectAnnotations_FiltersLogNoiseBeforeAssertion(t *testing.T) {
 	}
 	if !strings.Contains(a.Message, "        expected: true") {
 		t.Errorf("annotation message should preserve nested indentation, got:\n%s", a.Message)
+	}
+}
+
+func TestCollectAnnotations_PackageDiagnostic(t *testing.T) {
+	packages := []*Package{{
+		Path:   "github.com/user/repo/pkg/foo",
+		Status: StatusFail,
+		Nodes: []*Node{
+			{Kind: KindTest, Display: "TestFoo", Status: StatusPass},
+		},
+		Output: []string{
+			"==================\n",
+			"WARNING: DATA RACE\n",
+			"Write at 0x00c by goroutine 9:\n",
+			"  pkg.TestFoo.func1()\n",
+			"      /home/user/repo/pkg/foo/foo_test.go:12 +0x38\n",
+			"==================\n",
+		},
+	}}
+
+	annotations := CollectAnnotations(packages, "github.com/user/repo")
+
+	if len(annotations) != 1 {
+		t.Fatalf("expected 1 annotation, got %d", len(annotations))
+	}
+
+	a := annotations[0]
+	if a.File != "pkg/foo/foo_test.go" {
+		t.Errorf("file = %q, want %q", a.File, "pkg/foo/foo_test.go")
+	}
+	if a.Line != 12 {
+		t.Errorf("line = %d, want 12", a.Line)
 	}
 }
 
