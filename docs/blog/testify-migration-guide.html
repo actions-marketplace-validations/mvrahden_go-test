@@ -635,7 +635,6 @@
 
 <span class="kw">func</span> (s *<span class="tp">UserServiceTestSuite</span>) <span class="fn">TestGetNotFound</span>(t *<span class="tp">gotest.T</span>) {
     _, err := s.svc.Get(<span class="str">"nobody@example.com"</span>)
-    gotest.Error(t, err)
     gotest.ErrorIs(t, err, ErrNotFound)
 }</code></pre>
       </div>
@@ -657,6 +656,19 @@
         <li>Lifecycle hooks were renamed and now accept <code>t</code>: <code>SetupTest()</code> became <code>BeforeEach(t *gotest.T)</code>.</li>
         <li>Assertions moved from method calls on the suite to standalone function calls: <code>s.Require().NoError(err)</code> became <code>gotest.NoError(t, err)</code>.</li>
         <li>Test methods now accept <code>t</code>: <code>TestCreate()</code> became <code>TestCreate(t *gotest.T)</code>.</li>
+      </ul>
+
+      <h2>What changes beyond the syntax</h2>
+
+      <p>Once a suite is migrated, several things change beyond the syntax:</p>
+
+      <ul>
+        <li><strong>Compile-time safety.</strong> A typo in a lifecycle hook name (<code>SetUpTest</code> instead of <code>SetupTest</code>) silently does nothing in testify. In gotest, the code generator validates hook names and signatures at generation time. Wrong name? Clear error with file and line number.</li>
+        <li><strong>No framework in the stack trace.</strong> When a test fails, the stack trace shows your code calling a gotest assertion function. There's no reflection layer, no <code>suite.Run</code> orchestration, no <code>reflect.Value.Call</code> in between.</li>
+        <li><strong>BDD structure.</strong> Test methods can use <code>t.When()</code> and <code>t.It()</code> to create labeled subtests. Combined with <code>gotest spec</code>, your test hierarchy renders as a behavioral specification. <a href="readable-tests-with-bdd.html">More on BDD-style tests.</a></li>
+        <li><strong>Process isolation.</strong> Each suite runs as a separate OS process. A panicking test in one suite cannot crash another. Suite-level parallelism is safe by default.</li>
+        <li><strong>Fixtures.</strong> gotest's fixture system supports dependency DAGs, cross-package sharing via serialization, and automatic lifecycle management. <a href="test-fixtures-in-go.html">More on fixtures.</a></li>
+        <li><strong>No runtime dependency.</strong> The <code>gotest</code> package has zero transitive dependencies beyond the standard library. The code generator runs at build time. What executes at test time is standard <code>go test</code>.</li>
       </ul>
 
       <h2>Running the migration tool</h2>
@@ -738,11 +750,11 @@ $ gotest migrate ./... --dry-run</code></pre>
           </tr>
           <tr>
             <td><code>s.Nil(ptr)</code></td>
-            <td><code>gotest.Zero(t, ptr)</code></td>
+            <td><code>gotest.Nil(t, ptr)</code></td>
           </tr>
           <tr>
             <td><code>s.NotNil(ptr)</code></td>
-            <td><code>gotest.NotZero(t, ptr)</code></td>
+            <td><code>gotest.NotNil(t, ptr)</code></td>
           </tr>
         </tbody>
       </table>
@@ -765,19 +777,6 @@ $ gotest migrate ./... --dry-run</code></pre>
       </ol>
 
       <p>The linter can help track progress. <code>gotest lint</code> flags <code>testify/suite</code> imports in packages that also use gotest suites, catching packages where migration is incomplete.</p>
-
-      <h2>What you gain after migration</h2>
-
-      <p>Once a suite is migrated, several things change beyond the syntax:</p>
-
-      <ul>
-        <li><strong>Compile-time safety.</strong> A typo in a lifecycle hook name (<code>SetUpTest</code> instead of <code>SetupTest</code>) silently does nothing in testify. In gotest, the code generator validates hook names and signatures at generation time. Wrong name? Clear error with file and line number.</li>
-        <li><strong>No framework in the stack trace.</strong> When a test fails, the stack trace shows your code calling a gotest assertion function. There's no reflection layer, no <code>suite.Run</code> orchestration, no <code>reflect.Value.Call</code> in between.</li>
-        <li><strong>BDD structure.</strong> Test methods can use <code>t.When()</code> and <code>t.It()</code> to create labeled subtests. Combined with <code>gotest spec</code>, your test hierarchy renders as a behavioral specification. <a href="readable-tests-with-bdd.html">More on BDD-style tests.</a></li>
-        <li><strong>Process isolation.</strong> Each suite runs as a separate OS process. A panicking test in one suite cannot crash another. Suite-level parallelism is safe by default.</li>
-        <li><strong>Fixtures.</strong> gotest's fixture system supports dependency DAGs, cross-package sharing via serialization, and automatic lifecycle management. <a href="test-fixtures-in-go.html">More on fixtures.</a></li>
-        <li><strong>No runtime dependency.</strong> The <code>gotest</code> package has zero transitive dependencies beyond the standard library. The code generator runs at build time. What executes at test time is standard <code>go test</code>.</li>
-      </ul>
 
       <h2>Common questions</h2>
 
