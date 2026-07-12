@@ -54,7 +54,7 @@ func runWatch(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 		return 2
 	}
 
-	cfg, err := parseExecFlags(ownArgs, goTestArgs, inv.Config)
+	cfg, err := parseExecFlags(ownArgs, goTestArgs, &inv.Config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2

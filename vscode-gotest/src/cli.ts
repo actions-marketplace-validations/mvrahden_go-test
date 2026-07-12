@@ -136,7 +136,6 @@ export async function buildCliCommand(
   return { bin: goBin, args: ["run", qualified, ...subcommandArgs] };
 }
 
-
 function resolveCliPath(cliPath: string, workspaceDir?: string): string {
   if (path.isAbsolute(cliPath)) {
     return cliPath;

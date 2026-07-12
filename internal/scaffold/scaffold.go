@@ -244,7 +244,6 @@ func toPascalCase(s string) string {
 	return result.String()
 }
 
-
 func extractStructMethods(named *types.Named) []MethodInfo {
 	// Get pointer receiver methods (includes value receiver methods)
 	mset := types.NewMethodSet(types.NewPointer(named))

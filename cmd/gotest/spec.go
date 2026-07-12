@@ -42,7 +42,7 @@ func runSpec(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 	}
 	defer coverCleanup()
 
-	cfg, err := parseExecFlags(ownArgs, goTestArgs, inv.Config)
+	cfg, err := parseExecFlags(ownArgs, goTestArgs, &inv.Config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2

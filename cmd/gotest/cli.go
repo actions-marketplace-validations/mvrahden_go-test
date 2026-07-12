@@ -104,7 +104,7 @@ func runTest(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 	}
 	defer coverCleanup()
 
-	cfg, err := parseExecFlags(ownArgs, goTestArgs, inv.Config)
+	cfg, err := parseExecFlags(ownArgs, goTestArgs, &inv.Config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
@@ -188,7 +188,7 @@ func parseCompileParallelFlag(args []string) (int, error) {
 	return v, nil
 }
 
-func parseExecFlags(ownArgs, goTestArgs []string, projCfg config.ProjectConfig) (ExecConfig, error) {
+func parseExecFlags(ownArgs, goTestArgs []string, projCfg *config.ProjectConfig) (ExecConfig, error) {
 	setupTimeout, err := parseSetupTimeoutFlag(ownArgs)
 	if err != nil {
 		return ExecConfig{}, err
