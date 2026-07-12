@@ -10,9 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/mvrahden/go-test/internal/about"
+	"github.com/mvrahden/go-test/internal/gotestast"
 )
 
-const gotestImport = "github.com/mvrahden/go-test/pkg/gotest"
+var gotestImport = about.Repo + "/pkg/gotest"
 
 // MigrationPlan describes all suites found in a single file.
 type MigrationPlan struct {
@@ -171,14 +174,7 @@ func extractReceiverInfo(field *ast.Field) (typeName, varName string) {
 	if len(field.Names) > 0 {
 		varName = field.Names[0].Name
 	}
-	switch t := field.Type.(type) {
-	case *ast.StarExpr:
-		if ident, ok := t.X.(*ast.Ident); ok {
-			typeName = ident.Name
-		}
-	case *ast.Ident:
-		typeName = t.Name
-	}
+	typeName = gotestast.ReceiverTypeName(field.Type)
 	return
 }
 

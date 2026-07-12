@@ -11,6 +11,8 @@ import (
 	"unicode"
 
 	"github.com/mvrahden/go-test/internal/about"
+	"github.com/mvrahden/go-test/internal/gotestast"
+	"github.com/mvrahden/go-test/internal/protocol"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
 	"golang.org/x/tools/go/ast/inspector"
@@ -211,8 +213,8 @@ func discoverSuites(insp *inspector.Inspector) map[string]*suiteInfo {
 				continue
 			}
 			name := ts.Name.Name
-			stripped := strings.TrimPrefix(strings.TrimPrefix(name, "F_"), "X_")
-			if strings.HasSuffix(stripped, "TestSuite") {
+			stripped := strings.TrimPrefix(strings.TrimPrefix(name, protocol.PrefixFocused), protocol.PrefixExcluded)
+			if strings.HasSuffix(stripped, protocol.SuffixTestSuite) {
 				suites[name] = &suiteInfo{
 					name:    name,
 					pos:     ts.Pos(),
@@ -230,8 +232,8 @@ func discoverSuites(insp *inspector.Inspector) map[string]*suiteInfo {
 // behind a green CI run.
 func checkFocusPrefixes(pass *analysis.Pass, suites map[string]*suiteInfo) {
 	for name, s := range suites {
-		if strings.HasPrefix(name, "F_") {
-			stripped := strings.TrimPrefix(name, "F_")
+		if strings.HasPrefix(name, protocol.PrefixFocused) {
+			stripped := strings.TrimPrefix(name, protocol.PrefixFocused)
 			edits := []analysis.TextEdit{{
 				Pos:     s.pos,
 				End:     s.pos + 2,
@@ -287,12 +289,12 @@ func checkMethods(pass *analysis.Pass, insp *inspector.Inspector, suites map[str
 				"suite method %s.%s should use a pointer receiver", recvName, methodName)
 		}
 
-		stripped := strings.TrimPrefix(strings.TrimPrefix(methodName, "F_"), "X_")
+		stripped := strings.TrimPrefix(strings.TrimPrefix(methodName, protocol.PrefixFocused), protocol.PrefixExcluded)
 		if strings.HasPrefix(stripped, "Test") {
-			if strings.HasPrefix(methodName, "F_") {
+			if strings.HasPrefix(methodName, protocol.PrefixFocused) {
 				reportWithFix(pass, Focus, fd.Pos(),
 					[]analysis.SuggestedFix{{
-						Message: fmt.Sprintf("rename %s to %s", methodName, strings.TrimPrefix(methodName, "F_")),
+						Message: fmt.Sprintf("rename %s to %s", methodName, strings.TrimPrefix(methodName, protocol.PrefixFocused)),
 						TextEdits: []analysis.TextEdit{{
 							Pos:     fd.Name.Pos(),
 							End:     fd.Name.Pos() + 2,
@@ -308,7 +310,7 @@ func checkMethods(pass *analysis.Pass, insp *inspector.Inspector, suites map[str
 		}
 
 		if isLifecycleHook(stripped) {
-			if strings.HasPrefix(methodName, "X_") {
+			if strings.HasPrefix(methodName, protocol.PrefixExcluded) {
 				report(pass, XLifecycle, fd.Pos(), "X_ prefix on lifecycle hook %s.%s has no effect — remove the prefix or the method", recvName, methodName)
 			}
 			return
@@ -526,7 +528,7 @@ func collectInterproceduralEscape(call *ast.CallExpr, tVars, gotestTVars map[str
 	}
 }
 
-const gotestImportPath = "github.com/mvrahden/go-test/pkg/gotest"
+var gotestImportPath = about.Repo + "/pkg/gotest"
 
 func isGotestPkgRef(pass *analysis.Pass, expr ast.Expr) bool {
 	id, ok := expr.(*ast.Ident)
@@ -934,23 +936,7 @@ func receiverTypeName(recv *ast.FieldList) string {
 	if recv == nil || len(recv.List) == 0 {
 		return ""
 	}
-	t := recv.List[0].Type
-	if star, ok := t.(*ast.StarExpr); ok {
-		t = star.X
-	}
-	switch x := t.(type) {
-	case *ast.Ident:
-		return x.Name
-	case *ast.IndexExpr:
-		if ident, ok := x.X.(*ast.Ident); ok {
-			return ident.Name
-		}
-	case *ast.IndexListExpr:
-		if ident, ok := x.X.(*ast.Ident); ok {
-			return ident.Name
-		}
-	}
-	return ""
+	return gotestast.ReceiverTypeName(recv.List[0].Type)
 }
 
 func isPointerReceiver(recv *ast.FieldList) bool {

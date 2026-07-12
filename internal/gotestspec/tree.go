@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mvrahden/go-test/internal/protocol"
 )
 
 type Status int
@@ -83,7 +85,7 @@ func BuildTree(events []TestEvent) []*Package {
 				pkg.Status = statusFrom(ev.Action)
 				pkg.Duration = elapsed(ev.Elapsed)
 			case ActionOutput:
-				if !isPackageSummaryLine(ev.Output) {
+				if !protocol.IsPackageSummaryLine(ev.Output) {
 					pkg.Output = append(pkg.Output, ev.Output)
 				}
 			}
@@ -267,44 +269,44 @@ func classify(n *Node, topLevel bool) {
 	if topLevel {
 		raw := strings.TrimPrefix(name, "Test")
 
-		if strings.HasPrefix(raw, "F_") {
+		if strings.HasPrefix(raw, protocol.PrefixFocused) {
 			n.Focused = true
-			raw = raw[2:]
-		} else if strings.HasPrefix(raw, "X_") {
+			raw = strings.TrimPrefix(raw, protocol.PrefixFocused)
+		} else if strings.HasPrefix(raw, protocol.PrefixExcluded) {
 			n.Excluded = true
-			raw = raw[2:]
+			raw = strings.TrimPrefix(raw, protocol.PrefixExcluded)
 		}
 
 		switch {
-		case strings.HasPrefix(raw, "_") && strings.HasSuffix(raw, "Fixture"):
+		case strings.HasPrefix(raw, "_") && strings.HasSuffix(raw, protocol.SuffixFixture):
 			n.Kind = KindFixture
-			n.Display = strings.TrimSuffix(strings.TrimPrefix(raw, "_"), "Fixture")
-		case strings.HasSuffix(raw, "TestSuite"):
+			n.Display = strings.TrimSuffix(strings.TrimPrefix(raw, "_"), protocol.SuffixFixture)
+		case strings.HasSuffix(raw, protocol.SuffixTestSuite):
 			n.Kind = KindSuite
-			n.Display = strings.TrimSuffix(raw, "TestSuite")
+			n.Display = strings.TrimSuffix(raw, protocol.SuffixTestSuite)
 		default:
 			n.Kind = KindTest
 			n.Display = strings.TrimPrefix(raw, "_")
 		}
 	} else {
-		if strings.HasPrefix(name, "F_") {
+		if strings.HasPrefix(name, protocol.PrefixFocused) {
 			n.Focused = true
-			name = name[2:]
-		} else if strings.HasPrefix(name, "X_") {
+			name = strings.TrimPrefix(name, protocol.PrefixFocused)
+		} else if strings.HasPrefix(name, protocol.PrefixExcluded) {
 			n.Excluded = true
-			name = name[2:]
+			name = strings.TrimPrefix(name, protocol.PrefixExcluded)
 		}
 
 		switch {
 		case strings.HasPrefix(name, "Test"):
 			n.Kind = KindMethod
 			n.Display = strings.TrimPrefix(name, "Test")
-		case strings.HasSuffix(name, "Fixture") && !strings.HasSuffix(name, "TestSuite"):
+		case strings.HasSuffix(name, protocol.SuffixFixture) && !strings.HasSuffix(name, protocol.SuffixTestSuite):
 			n.Kind = KindFixture
-			n.Display = strings.TrimSuffix(name, "Fixture")
-		case strings.HasSuffix(name, "TestSuite"):
+			n.Display = strings.TrimSuffix(name, protocol.SuffixFixture)
+		case strings.HasSuffix(name, protocol.SuffixTestSuite):
 			n.Kind = KindSuite
-			n.Display = strings.TrimSuffix(name, "TestSuite")
+			n.Display = strings.TrimSuffix(name, protocol.SuffixTestSuite)
 		default:
 			n.Kind = KindBlock
 			n.Display = strings.ReplaceAll(name, "_", " ")
@@ -358,15 +360,3 @@ func elapsed(s float64) time.Duration {
 	return time.Duration(s * float64(time.Second))
 }
 
-// isPackageSummaryLine reports whether s is a `go test` package-level summary
-// line (e.g. "PASS", "FAIL", "ok  \tpkg\t0.01s", "FAIL\tpkg\t0.01s",
-// "?   \tpkg\t[no test files]") rather than diagnostic output that should be
-// surfaced to the user.
-// NOTE: keep in sync with internal/gotestrunner/output_collector.go isPackageSummaryLine.
-func isPackageSummaryLine(s string) bool {
-	s = strings.TrimRight(s, "\n\r")
-	return s == "PASS" || s == "FAIL" ||
-		strings.HasPrefix(s, "ok  \t") ||
-		strings.HasPrefix(s, "FAIL\t") ||
-		strings.HasPrefix(s, "?   \t")
-}

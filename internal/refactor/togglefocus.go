@@ -8,6 +8,9 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/mvrahden/go-test/internal/gotestast"
+	"github.com/mvrahden/go-test/internal/protocol"
 )
 
 type replacement struct {
@@ -118,22 +121,14 @@ func toggleMethod(filePath string, src []byte, fset *token.FileSet, file *ast.Fi
 }
 
 func togglePrefix(name string) string {
-	if strings.HasPrefix(name, "F_") {
-		return name[2:]
+	if strings.HasPrefix(name, protocol.PrefixFocused) {
+		return strings.TrimPrefix(name, protocol.PrefixFocused)
 	}
-	return "F_" + name
+	return protocol.PrefixFocused + name
 }
 
 func receiverTypeName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.StarExpr:
-		if ident, ok := t.X.(*ast.Ident); ok {
-			return ident.Name
-		}
-	case *ast.Ident:
-		return t.Name
-	}
-	return ""
+	return gotestast.ReceiverTypeName(expr)
 }
 
 func receiverNameOffset(fset *token.FileSet, expr ast.Expr) int {
