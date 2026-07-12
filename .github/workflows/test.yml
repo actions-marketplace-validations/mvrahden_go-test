@@ -10,19 +10,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-      - run: go build ./...
-
   platform-test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -34,8 +21,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-      - name: Init workspace
-        run: go work init . ./examples
       - name: Test (stdlib)
         run: go test -ldflags=-checklinkname=0 ./... -race
       - name: Test (suites)
@@ -55,8 +40,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go-version }}
-      - name: Init workspace
-        run: go work init . ./examples
       - name: Test (stdlib)
         run: go test -ldflags=-checklinkname=0 -coverprofile=coverage-stdlib.out ./... -race
       - name: Test (suites)

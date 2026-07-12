@@ -2,13 +2,13 @@ package gotestgen
 
 import (
 	"fmt"
-	"go/ast"
 	"go/types"
 	"os"
 	"sort"
 	"strings"
 
 	"github.com/mvrahden/go-test/internal/gotestast"
+	"github.com/mvrahden/go-test/internal/protocol"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -263,7 +263,7 @@ func (r *resolver) resolveFixturesForSuite(suite *gotestast.TestSuiteSpec) ([]su
 		}
 		name := named.Obj().Name()
 
-		if strings.HasSuffix(name, "SharedFixture") {
+		if strings.HasSuffix(name, protocol.SuffixSharedFixture) {
 			ref, err := r.buildSharedFixtureRef(named, sfIdx)
 			if err != nil {
 				return nil, err
@@ -271,7 +271,7 @@ func (r *resolver) resolveFixturesForSuite(suite *gotestast.TestSuiteSpec) ([]su
 			ref.FieldName = field.Name()
 			sharedRefs = append(sharedRefs, ref)
 			sfIdx++
-		} else if strings.HasSuffix(name, "Fixture") {
+		} else if strings.HasSuffix(name, protocol.SuffixFixture) {
 			rf, err := r.resolveFixture(named)
 			if err != nil {
 				return nil, err
@@ -312,7 +312,7 @@ func (r *resolver) resolveFixture(named *types.Named) (*ResolvedFixture, error) 
 	}
 
 	kind := gotestast.PackageFixture
-	if strings.HasSuffix(baseName, "SharedFixture") {
+	if strings.HasSuffix(baseName, protocol.SuffixSharedFixture) {
 		kind = gotestast.SharedFixture
 	}
 
@@ -384,7 +384,7 @@ func (r *resolver) resolvePackageFixtureFields(rf *ResolvedFixture, st *types.St
 		}
 		typeName := named.Obj().Name()
 
-		if strings.HasSuffix(typeName, "SharedFixture") {
+		if strings.HasSuffix(typeName, protocol.SuffixSharedFixture) {
 			sfRef, err := r.buildSharedFixtureRef(named, sfIdx)
 			if err != nil {
 				return err
@@ -392,7 +392,7 @@ func (r *resolver) resolvePackageFixtureFields(rf *ResolvedFixture, st *types.St
 			sfRef.FieldName = field.Name()
 			rf.SharedFixtures = append(rf.SharedFixtures, sfRef)
 			sfIdx++
-		} else if strings.HasSuffix(typeName, "Fixture") {
+		} else if strings.HasSuffix(typeName, protocol.SuffixFixture) {
 			parent, err := r.resolveFixture(named)
 			if err != nil {
 				return err
@@ -522,7 +522,7 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 	if hasHydrate {
 		pkg := r.findPackageForType(named)
 		if pkg != nil && len(pkg.Syntax) > 0 {
-			hydrateDecl := findHydrateDecl(pkg, baseName)
+			hydrateDecl := gotestast.FindMethodDecl(pkg, baseName, "Hydrate")
 			if hydrateDecl != nil {
 				localFields = gotestast.ClassifyLocalFieldsRaw(hydrateDecl, baseName, pkg.Syntax, pkg.TypesInfo)
 			}
@@ -549,7 +549,7 @@ func (r *resolver) registerSharedFixture(named *types.Named) error {
 			continue
 		}
 		depName := depNamed.Obj().Name()
-		if strings.HasSuffix(depName, "SharedFixture") {
+		if strings.HasSuffix(depName, protocol.SuffixSharedFixture) {
 			depKey := depNamed.Obj().Pkg().Path() + "." + fixtureIdentifier(depNamed)
 			deps = append(deps, depKey)
 			depFields[f.Name()] = true
@@ -632,36 +632,6 @@ func (r *resolver) findLocalSpec(rf *ResolvedFixture) *gotestast.FixtureSpec {
 	for _, lf := range r.localFixtures {
 		if lf.Identifier() == rf.Identifier {
 			return lf
-		}
-	}
-	return nil
-}
-
-func findHydrateDecl(pkg *packages.Package, fixtureName string) *ast.FuncDecl {
-	for _, file := range pkg.Syntax {
-		for _, decl := range file.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || fd.Recv == nil || fd.Name.Name != "Hydrate" {
-				continue
-			}
-			obj := pkg.TypesInfo.ObjectOf(fd.Name)
-			fn, ok := obj.(*types.Func)
-			if !ok {
-				continue
-			}
-			sig, ok := fn.Type().(*types.Signature)
-			if !ok || sig.Recv() == nil {
-				continue
-			}
-			recv := sig.Recv().Type()
-			if ptr, ok := recv.(*types.Pointer); ok {
-				recv = ptr.Elem()
-			}
-			named, ok := recv.(*types.Named)
-			if !ok || named.Obj().Name() != fixtureName {
-				continue
-			}
-			return fd
 		}
 	}
 	return nil

@@ -8,9 +8,10 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/mvrahden/go-test/internal/protocol"
 )
 
 // OutputCollector is a unified, mode-aware output pipeline that replaces
@@ -284,20 +285,6 @@ func (c *OutputCollector) emitJSONPackageSummary(w io.Writer, pkg string, s *pkg
 	})
 }
 
-// isPackageSummaryLine reports whether s (an "output" event's Output field)
-// is one of the summary lines that go test / test2json synthesizes itself
-// (e.g. "PASS", "FAIL\tpkg\t0.5s", "?   \tpkg\t[no test files]"). These are
-// re-synthesized by emitJSONPackageSummary, so raw copies from per-suite
-// test2json instances must be dropped to avoid duplication.
-// NOTE: keep in sync with internal/gotestspec/tree.go isPackageSummaryLine.
-func isPackageSummaryLine(s string) bool {
-	s = strings.TrimRight(s, "\n\r")
-	return s == "PASS" || s == "FAIL" ||
-		strings.HasPrefix(s, "ok  \t") ||
-		strings.HasPrefix(s, "FAIL\t") ||
-		strings.HasPrefix(s, "?   \t")
-}
-
 // filterPackageLevelEvents writes test-level JSON events (those with a
 // non-empty Test field) to w unchanged, strips package-level structural
 // events (start, pass, fail, etc.) and synthesized summary lines that would
@@ -329,7 +316,7 @@ func filterPackageLevelEvents(w io.Writer, data []byte) {
 			_, _ = w.Write([]byte{'\n'})
 			continue
 		}
-		if ev.Action == "output" && !isPackageSummaryLine(ev.Output) {
+		if ev.Action == "output" && !protocol.IsPackageSummaryLine(ev.Output) {
 			_, _ = w.Write(line)
 			_, _ = w.Write([]byte{'\n'})
 		}

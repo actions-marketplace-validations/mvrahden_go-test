@@ -41,21 +41,6 @@ export function parseTestEvents(jsonLines: string): TestEvent[] {
   return events;
 }
 
-export function groupEventsByPackage(
-  events: TestEvent[],
-): Map<string, TestEvent[]> {
-  const groups = new Map<string, TestEvent[]>();
-  for (const event of events) {
-    let list = groups.get(event.Package);
-    if (!list) {
-      list = [];
-      groups.set(event.Package, list);
-    }
-    list.push(event);
-  }
-  return groups;
-}
-
 /**
  * Extract file:line:message patterns from test output.
  * Pattern: /^\s*(.+?):(\d+):\s*(.+)$/
@@ -122,6 +107,17 @@ function isStdlibPath(file: string): boolean {
   const after = file.substring(idx + 5);
   const seg = after.split("/")[0];
   return seg !== "" && !seg.includes(".");
+}
+
+export function isPackageSummaryLine(s: string): boolean {
+  const trimmed = s.replace(/[\n\r]+$/, "");
+  return (
+    trimmed === "PASS" ||
+    trimmed === "FAIL" ||
+    trimmed.startsWith("ok  \t") ||
+    trimmed.startsWith("FAIL\t") ||
+    trimmed.startsWith("?   \t")
+  );
 }
 
 export function parseExpectedActual(

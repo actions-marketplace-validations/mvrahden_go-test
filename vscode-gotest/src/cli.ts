@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolveGoBinary, fileExists, clearGoBinaryCache } from "./goBinary.js";
+import { readModulePath } from "./gomod.js";
 
 export { resolveGoBinary } from "./goBinary.js";
 
@@ -79,7 +80,7 @@ export async function buildCliCommand(
 
   // 2. Workspace IS the gotest module (development / go.work overlap)
   if (effectiveDir) {
-    const declaredModule = await readModuleDeclaration(effectiveDir);
+    const declaredModule = await readModulePath(effectiveDir);
     if (
       declaredModule &&
       (modulePath === declaredModule ||
@@ -133,19 +134,6 @@ export async function buildCliCommand(
     : `${modulePath}@latest`;
   log?.debug(`[cli] using fallback: ${goBin} run ${qualified}`);
   return { bin: goBin, args: ["run", qualified, ...subcommandArgs] };
-}
-
-async function readModuleDeclaration(
-  workspaceDir: string,
-): Promise<string | undefined> {
-  try {
-    const goModPath = path.join(workspaceDir, "go.mod");
-    const content = await readFile(goModPath, "utf-8");
-    const match = /^\s*module\s+(\S+)/m.exec(content);
-    return match?.[1];
-  } catch {
-    return undefined;
-  }
 }
 
 function resolveCliPath(cliPath: string, workspaceDir?: string): string {
