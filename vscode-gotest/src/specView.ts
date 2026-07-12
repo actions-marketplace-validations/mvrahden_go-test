@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { buildCliCommand } from "./cli.js";
+import { readModulePath } from "./gomod.js";
 import type { DiscoveryCache } from "./discovery.js";
 
 export class SpecViewPanel implements vscode.Disposable {
@@ -223,15 +223,10 @@ export class SpecViewPanel implements vscode.Disposable {
         return hit;
       }
       visited.push(dir);
-      try {
-        const content = await readFile(path.join(dir, "go.mod"), "utf-8");
-        const match = /^\s*module\s+(\S+)/m.exec(content);
-        if (match) {
-          for (const v of visited) cache.set(v, match[1]);
-          return match[1];
-        }
-      } catch {
-        // no go.mod at this level
+      const mod = await readModulePath(dir);
+      if (mod) {
+        for (const v of visited) cache.set(v, mod);
+        return mod;
       }
       const parent = path.dirname(dir);
       if (parent === dir) break;

@@ -6,6 +6,7 @@ import type { GoTestController } from "./testController.js";
 import type { CoverageStore } from "./coverageStore.js";
 import { type TestEvent } from "./outputParser.js";
 import { buildCliCommand, clearBinaryCache, formatCliCommand } from "./cli.js";
+import { readModulePath } from "./gomod.js";
 import {
   applyEvent,
   skipUnresolved,
@@ -269,12 +270,3 @@ export async function executeBatch(config: BatchConfig): Promise<BatchResult> {
   }
 }
 
-async function readModulePath(dir: string): Promise<string | undefined> {
-  try {
-    const content = await readFile(path.join(dir, "go.mod"), "utf-8");
-    const match = /^\s*module\s+(\S+)/m.exec(content);
-    return match?.[1];
-  } catch {
-    return undefined;
-  }
-}
