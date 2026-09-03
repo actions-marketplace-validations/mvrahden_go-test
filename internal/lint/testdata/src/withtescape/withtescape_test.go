@@ -16,6 +16,10 @@ func (s *EscapeTestSuite) TestMethodEscape(t *gotest.T) {
 	t.T().Skipf("reason")        // want `Skipf is available on gotest.T — unnecessary T escape`
 	t.T().Setenv("KEY", "VALUE") // want `Setenv is available on gotest.T — unnecessary T escape`
 	_ = t.T().TempDir()          // want `TempDir is available on gotest.T — unnecessary T escape`
+	t.T().Helper()               // want `never call Helper — gotest resolves call sites automatically; Helper degrades failure locations`
+	t.T().Log("msg")             // want `use assertion message args instead — T.Log bypasses the failure report`
+	t.T().Fatal("msg")           // want `use assertions instead — T.Fatal bypasses the assertion tracer`
+	t.T().Fatalf("msg %d", 1)    // want `use assertions instead — T.Fatalf bypasses the assertion tracer`
 }
 
 func (s *EscapeTestSuite) TestAliasEscape(t *gotest.T) {
@@ -130,4 +134,9 @@ type escapeHelper struct{}
 
 func (h *escapeHelper) doErrorf(t *testing.T) {
 	t.Errorf("msg") // want `Errorf is available on gotest.T — unnecessary T escape`
+}
+
+// Package-level var function literals are part of the traversal too.
+var packageLevelCheck = func(t *gotest.T) {
+	t.T().Errorf("boom") // want `Errorf is available on gotest.T — unnecessary T escape`
 }

@@ -33,21 +33,96 @@ const (
 	TestSignature      Rule = "test-signature"
 	XLifecycle         Rule = "x-lifecycle"
 	AssertionSimplify  Rule = "assertion-simplify"
+	FailGuard          Rule = "fail-guard"
 	AssertionTypeGuard Rule = "assertion-type-guard"
 	AssertionRedundant Rule = "assertion-redundant"
 	TEscape            Rule = "t-escape"
+	SuiteLifecycle     Rule = "suite-lifecycle"
+	// SharedFixtureUndeclared is integrity: window scheduling starts only
+	// the fixtures scheduled suites declare, so an undeclared read may hit
+	// a fixture that never started or is already released.
+	SharedFixtureUndeclared Rule = "shared-fixture-undeclared"
 )
 
-// SkippableRules is the set of rules that support opt-out via skip flags.
-var SkippableRules = map[Rule]bool{
-	StdlibTest: true,
-	Testify:    true,
+// Tier classifies what breaks when a rule's finding is ignored, and derives
+// the suppression policy: integrity rules (test outcomes can lie, resources
+// can leak) are suppressible per line only; expressiveness rules (the test is
+// correct but says it worse) and migration rules (legitimate coexistence) may
+// additionally be skipped project-wide.
+type Tier int
+
+const (
+	TierIntegrity Tier = iota
+	TierExpressiveness
+	TierMigration
+)
+
+// Scope documents where a rule may fire.
+type Scope int
+
+const (
+	ScopeEverywhere Scope = iota
+	ScopeGotestFiles
+	ScopeSuites
+	ScopePollCallbacks
+)
+
+var ruleMeta = map[Rule]struct {
+	Tier  Tier
+	Scope Scope
+}{
+	Focus:              {TierIntegrity, ScopeSuites},
+	Receiver:           {TierIntegrity, ScopeSuites},
+	LifecycleTypo:      {TierIntegrity, ScopeSuites},
+	LifecyclePair:      {TierIntegrity, ScopeSuites},
+	GeneratedFile:      {TierIntegrity, ScopeEverywhere},
+	StdlibTest:         {TierMigration, ScopeEverywhere},
+	Testify:            {TierMigration, ScopeEverywhere},
+	PollScope:          {TierIntegrity, ScopePollCallbacks},
+	TestSignature:      {TierIntegrity, ScopeSuites},
+	XLifecycle:         {TierIntegrity, ScopeSuites},
+	AssertionSimplify:  {TierExpressiveness, ScopeGotestFiles},
+	AssertionTypeGuard: {TierIntegrity, ScopeGotestFiles},
+	AssertionRedundant: {TierExpressiveness, ScopeGotestFiles},
+	TEscape:            {TierExpressiveness, ScopeSuites},
+	SuiteLifecycle:     {TierIntegrity, ScopeSuites},
+	FailGuard:          {TierExpressiveness, ScopeGotestFiles},
+
+	SharedFixtureUndeclared: {TierIntegrity, ScopeSuites},
 }
 
+// Known reports whether the rule ID exists.
+func Known(r Rule) bool {
+	_, ok := ruleMeta[r]
+	return ok
+}
+
+// RuleIDs returns every registered rule ID, sorted — the registry surface
+// drift guards compare against documentation.
+func RuleIDs() []Rule {
+	ids := make([]Rule, 0, len(ruleMeta))
+	for r := range ruleMeta {
+		ids = append(ids, r)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// SkippableRules is derived from the tier table: every non-integrity rule
+// supports opt-out via a skip flag (and .gotest.yml lint.skip).
+var SkippableRules = func() map[Rule]bool {
+	m := make(map[Rule]bool, len(ruleMeta))
+	for r, meta := range ruleMeta {
+		if meta.Tier != TierIntegrity {
+			m[r] = true
+		}
+	}
+	return m
+}()
+
 var cfg struct {
-	skipStdlibTest bool
-	skipTestify    bool
-	disableNolint  bool
+	skip          map[Rule]*bool
+	disableNolint bool
 }
 
 var Analyzer = &analysis.Analyzer{
@@ -58,9 +133,21 @@ var Analyzer = &analysis.Analyzer{
 }
 
 func init() {
-	Analyzer.Flags.BoolVar(&cfg.skipStdlibTest, "skip-stdlib-test", false, "disable stdlib test function detection")
-	Analyzer.Flags.BoolVar(&cfg.skipTestify, "skip-testify", false, "disable testify import detection")
+	cfg.skip = make(map[Rule]*bool, len(SkippableRules))
+	rules := make([]string, 0, len(SkippableRules))
+	for r := range SkippableRules {
+		rules = append(rules, string(r))
+	}
+	slices.Sort(rules)
+	for _, r := range rules {
+		cfg.skip[Rule(r)] = Analyzer.Flags.Bool("skip-"+r, false, "disable the "+r+" rule")
+	}
 	Analyzer.Flags.BoolVar(&cfg.disableNolint, "disable-nolint", false, "report all diagnostics and let the analysis driver handle suppression")
+}
+
+func skipped(rule Rule) bool {
+	b, ok := cfg.skip[rule]
+	return ok && *b
 }
 
 var lifecycleHooks = []string{"BeforeAll", "AfterAll", "BeforeEach", "AfterEach"}
@@ -73,20 +160,53 @@ func run(pass *analysis.Pass) (any, error) {
 		checkMethods(pass, insp, suites)
 		checkFocusPrefixes(pass, suites)
 		checkLifecyclePairs(pass, suites)
+		checkSharedFixtureUndeclared(pass, insp, suites)
 	}
 
 	checkOrphanedFiles(pass)
 	checkStdlibTests(pass, insp)
 	checkTestifyImports(pass)
-	checkPollScope(pass, insp)
-	checkAssertionSimplify(pass, insp)
-	checkRedundantAssertion(pass, insp)
-	checkTEscape(pass, insp, suites)
+
+	// Integrity rules run first and claim the constructs they own;
+	// expressiveness rules stand down on claimed spans so one construct
+	// yields one finding, from the rule with the stronger story.
+	cl := &claims{}
+	checkPollScope(pass, insp, cl)
+	checkTEscape(pass, insp, suites, cl)
+	checkAssertionSimplify(pass, insp, cl)
+	checkFailGuard(pass, insp, cl)
+	checkRedundantAssertion(pass, insp, cl)
 
 	return nil, nil
 }
 
+// claims records positions owned by earlier findings, whether or not a
+// diagnostic was shown — per-line suppression exempts the construct, not
+// just the message. A skipped expressiveness rule releases its constructs
+// to the remaining active rules; integrity rules cannot be skipped and
+// always claim.
+type claims struct{ positions []token.Pos }
+
+func (c *claims) add(rule Rule, pos token.Pos) {
+	if ruleMeta[rule].Tier != TierIntegrity && skipped(rule) {
+		return
+	}
+	c.positions = append(c.positions, pos)
+}
+
+func (c *claims) anyWithin(start, end token.Pos) bool {
+	for _, p := range c.positions {
+		if p >= start && p < end {
+			return true
+		}
+	}
+	return false
+}
+
 func report(pass *analysis.Pass, rule Rule, pos token.Pos, format string, args ...any) {
+	if skipped(rule) {
+		return
+	}
 	if !cfg.disableNolint && isSuppressed(pass, pos, rule) {
 		return
 	}
@@ -98,6 +218,9 @@ func report(pass *analysis.Pass, rule Rule, pos token.Pos, format string, args .
 }
 
 func reportWithFix(pass *analysis.Pass, rule Rule, pos token.Pos, fixes []analysis.SuggestedFix, format string, args ...any) {
+	if skipped(rule) {
+		return
+	}
 	if !cfg.disableNolint && isSuppressed(pass, pos, rule) {
 		return
 	}
@@ -109,50 +232,76 @@ func reportWithFix(pass *analysis.Pass, rule Rule, pos token.Pos, fixes []analys
 	})
 }
 
-func isSuppressed(pass *analysis.Pass, pos token.Pos, rule Rule) bool {
-	position := pass.Fset.Position(pos)
+// fileContaining returns the syntax file whose span contains pos, or nil.
+func fileContaining(pass *analysis.Pass, pos token.Pos) *ast.File {
 	for _, file := range pass.Files {
-		if pass.Fset.Position(file.Pos()).Filename != position.Filename {
-			continue
+		if pos >= file.FileStart && pos <= file.FileEnd {
+			return file
 		}
-		pkgLine := pass.Fset.Position(file.Package).Line
-		for _, cg := range file.Comments {
-			for _, c := range cg.List {
-				rules, ok := parseNolint(c.Text)
-				if !ok {
-					continue
-				}
-				if rules != nil && !rules[rule] {
-					continue
-				}
-				cLine := pass.Fset.Position(c.Pos()).Line
-				if cLine == pkgLine {
-					return true
-				}
-				if cLine == position.Line {
-					return true
-				}
+	}
+	return nil
+}
+
+// nolintAliases maps a rule to the historical umbrella ID whose nolint
+// comments also suppress it: suite-lifecycle was split out of t-escape, and
+// committed //nolint:t-escape comments must keep working.
+var nolintAliases = map[Rule]Rule{
+	SuiteLifecycle: TEscape,
+}
+
+func ruleMatched(rules map[Rule]bool, rule Rule) bool {
+	if rules == nil || rules[rule] {
+		return true
+	}
+	umbrella, ok := nolintAliases[rule]
+	return ok && rules[umbrella]
+}
+
+func isSuppressed(pass *analysis.Pass, pos token.Pos, rule Rule) bool {
+	file := fileContaining(pass, pos)
+	if file == nil {
+		return false
+	}
+	line := pass.Fset.Position(pos).Line
+	pkgLine := pass.Fset.Position(file.Package).Line
+	for _, cg := range file.Comments {
+		for _, c := range cg.List {
+			rules, ok := parseNolint(c.Text)
+			if !ok {
+				continue
+			}
+			if !ruleMatched(rules, rule) {
+				continue
+			}
+			cLine := pass.Fset.Position(c.Pos()).Line
+			if cLine == pkgLine || cLine == line {
+				return true
+			}
+			if pass.Fset.Position(cg.End()).Line == line-1 && startsItsLine(pass, file, cg) {
+				return true
 			}
 		}
-		return false
 	}
 	return false
 }
 
-func docSuppressed(doc *ast.CommentGroup, rule Rule) bool {
-	if doc == nil {
-		return false
-	}
-	for _, c := range doc.List {
-		rules, ok := parseNolint(c.Text)
-		if !ok {
-			continue
+// startsItsLine reports whether no code precedes the comment group on its
+// opening line — a comment trailing the previous statement must not suppress
+// the line below it.
+func startsItsLine(pass *analysis.Pass, file *ast.File, cg *ast.CommentGroup) bool {
+	cgLine := pass.Fset.Position(cg.Pos()).Line
+	standalone := true
+	ast.Inspect(file, func(n ast.Node) bool {
+		if n == nil || !standalone {
+			return false
 		}
-		if rules == nil || rules[rule] {
-			return true
+		if n.End() <= cg.Pos() && pass.Fset.Position(n.End()).Line == cgLine {
+			standalone = false
+			return false
 		}
-	}
-	return false
+		return n.Pos() < cg.Pos()
+	})
+	return standalone
 }
 
 func parseNolint(text string) (rules map[Rule]bool, ok bool) {
@@ -304,7 +453,7 @@ func checkMethods(pass *analysis.Pass, insp *inspector.Inspector, suites map[str
 					"focused method %s.%s should not be committed", recvName, methodName)
 			}
 			if !hasValidTestSignature(fd) {
-				report(pass, TestSignature, fd.Pos(), "test method %s.%s has wrong signature — must accept *gotest.T", recvName, methodName)
+				report(pass, TestSignature, fd.Pos(), "test method %s.%s has wrong signature — must accept *gotest.T (or *testing.T)", recvName, methodName)
 			}
 			return
 		}
@@ -345,33 +494,24 @@ type escapeConfig struct {
 	message    string
 	suiteOnly  bool
 	canAutofix bool
+	directOnly bool // only flag direct t.T().X() calls; plain *testing.T helpers may use X legitimately
 }
 
 var escapeConfigs = map[string]escapeConfig{
-	"Errorf":   {TEscape, "Errorf is available on gotest.T — unnecessary T escape", false, true},
-	"FailNow":  {TEscape, "FailNow is available on gotest.T — unnecessary T escape", false, true},
-	"Skipf":    {TEscape, "Skipf is available on gotest.T — unnecessary T escape", false, true},
-	"Setenv":   {TEscape, "Setenv is available on gotest.T — unnecessary T escape", false, true},
-	"TempDir":  {TEscape, "TempDir is available on gotest.T — unnecessary T escape", false, true},
-	"Skip":     {TEscape, "must use Skipf instead — unnecessary T escape", false, false},
-	"SkipNow":  {TEscape, "must use Skipf instead — unnecessary T escape", false, false},
-	"Cleanup":  {TEscape, "use AfterEach or AfterAll for cleanup — T.Cleanup bypasses suite lifecycle", true, false},
-	"Parallel": {TEscape, "use SuiteConfig.Parallel instead — T.Parallel bypasses suite lifecycle coordination", true, false},
-	"Run":      {TEscape, "use It or When instead — T.Run bypasses gotest wrapping", true, false},
-}
-
-var gotestAssertionFuncs = map[string]bool{
-	"True": true, "False": true,
-	"Equal": true, "NotEqual": true,
-	"Greater": true, "GreaterOrEqual": true,
-	"Less": true, "LessOrEqual": true,
-	"Zero": true, "NotZero": true,
-	"Empty": true, "NotEmpty": true,
-	"Len": true, "Contains": true, "NotContains": true,
-	"NoError": true, "Error": true,
-	"ErrorIs": true, "ErrorContains": true,
-	"Regexp": true, "MatchSnapshot": true,
-	"Eventually": true, "Consistently": true,
+	"Errorf":   {TEscape, "Errorf is available on gotest.T — unnecessary T escape", false, true, false},
+	"FailNow":  {TEscape, "FailNow is available on gotest.T — unnecessary T escape", false, true, false},
+	"Skipf":    {TEscape, "Skipf is available on gotest.T — unnecessary T escape", false, true, false},
+	"Setenv":   {TEscape, "Setenv is available on gotest.T — unnecessary T escape", false, true, false},
+	"TempDir":  {TEscape, "TempDir is available on gotest.T — unnecessary T escape", false, true, false},
+	"Skip":     {TEscape, "must use Skipf instead — unnecessary T escape", false, false, false},
+	"SkipNow":  {TEscape, "must use Skipf instead — unnecessary T escape", false, false, false},
+	"Cleanup":  {SuiteLifecycle, "use AfterEach or AfterAll for cleanup — T.Cleanup bypasses suite lifecycle", true, false, false},
+	"Parallel": {SuiteLifecycle, "use SuiteConfig.Parallel instead — T.Parallel bypasses suite lifecycle coordination", true, false, false},
+	"Run":      {SuiteLifecycle, "use It or When instead — T.Run bypasses gotest wrapping", true, false, false},
+	"Helper":   {TEscape, "never call Helper — gotest resolves call sites automatically; Helper degrades failure locations", false, false, true},
+	"Log":      {TEscape, "use assertion message args instead — T.Log bypasses the failure report", false, false, true},
+	"Fatal":    {TEscape, "use assertions instead — T.Fatal bypasses the assertion tracer", false, false, true},
+	"Fatalf":   {TEscape, "use assertions instead — T.Fatalf bypasses the assertion tracer", false, false, true},
 }
 
 type deferredReport struct {
@@ -380,10 +520,26 @@ type deferredReport struct {
 	message string
 }
 
-func checkTEscape(pass *analysis.Pass, insp *inspector.Inspector, suites map[string]*suiteInfo) {
+func checkTEscape(pass *analysis.Pass, insp *inspector.Inspector, suites map[string]*suiteInfo, cl *claims) {
 	mr := buildMethodReach(pass, insp, 5)
 	reported := map[token.Pos]bool{}
 	var deferred []deferredReport
+
+	scanBody := func(body *ast.BlockStmt, isSuiteMethod bool, gotestTVars map[string]bool) {
+		tVars := map[string]bool{}
+		ast.Inspect(body, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.AssignStmt:
+				trackTVarAssign(node, tVars, gotestTVars)
+			case *ast.CallExpr:
+				reportDirectEscape(pass, cl, node, isSuiteMethod, tVars, reported)
+				if isSuiteMethod {
+					collectInterproceduralEscape(node, tVars, gotestTVars, mr, &deferred)
+				}
+			}
+			return true
+		})
+	}
 
 	insp.Preorder([]ast.Node{(*ast.FuncDecl)(nil)}, func(n ast.Node) {
 		fd := n.(*ast.FuncDecl)
@@ -396,7 +552,6 @@ func checkTEscape(pass *analysis.Pass, insp *inspector.Inspector, suites map[str
 			_, isSuiteMethod = suites[receiverTypeName(fd.Recv)]
 		}
 
-		tVars := map[string]bool{}
 		gotestTVars := map[string]bool{}
 		if isSuiteMethod && fd.Type.Params != nil {
 			for _, field := range fd.Type.Params.List {
@@ -408,23 +563,36 @@ func checkTEscape(pass *analysis.Pass, insp *inspector.Inspector, suites map[str
 			}
 		}
 
-		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			switch node := n.(type) {
-			case *ast.AssignStmt:
-				trackTVarAssign(node, tVars, gotestTVars)
-			case *ast.CallExpr:
-				reportDirectEscape(pass, node, isSuiteMethod, tVars, reported)
-				if isSuiteMethod {
-					collectInterproceduralEscape(node, tVars, gotestTVars, mr, &deferred)
+		scanBody(fd.Body, isSuiteMethod, gotestTVars)
+	})
+
+	// Package-level var function literals are not FuncDecls but their bodies
+	// escape t.T() the same way — without scanning them the claims table
+	// would have blind spots the expressiveness rules rely on.
+	for _, file := range pass.Files {
+		for _, decl := range file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, value := range vs.Values {
+					if lit, ok := value.(*ast.FuncLit); ok && lit.Body != nil {
+						scanBody(lit.Body, false, map[string]bool{})
+					}
 				}
 			}
-			return true
-		})
-	})
+		}
+	}
 
 	for _, d := range deferred {
 		if !reported[d.pos] {
 			reported[d.pos] = true
+			cl.add(d.rule, d.pos)
 			report(pass, d.rule, d.pos, "%s", d.message)
 		}
 	}
@@ -454,7 +622,7 @@ func trackTVarAssign(assign *ast.AssignStmt, tVars, gotestTVars map[string]bool)
 	}
 }
 
-func reportDirectEscape(pass *analysis.Pass, call *ast.CallExpr, isSuiteMethod bool, tVars map[string]bool, reported map[token.Pos]bool) {
+func reportDirectEscape(pass *analysis.Pass, cl *claims, call *ast.CallExpr, isSuiteMethod bool, tVars map[string]bool, reported map[token.Pos]bool) {
 	sel, _ := call.Fun.(*ast.SelectorExpr)
 	if sel == nil {
 		return
@@ -471,6 +639,7 @@ func reportDirectEscape(pass *analysis.Pass, call *ast.CallExpr, isSuiteMethod b
 			}
 			if isDirect || isAlias {
 				reported[call.Pos()] = true
+				cl.add(esc.rule, call.Pos())
 				if esc.canAutofix && isDirect {
 					inner := sel.X.(*ast.CallExpr)
 					innerSel := inner.Fun.(*ast.SelectorExpr)
@@ -492,7 +661,7 @@ func reportDirectEscape(pass *analysis.Pass, call *ast.CallExpr, isSuiteMethod b
 		}
 	}
 
-	if gotestAssertionFuncs[sel.Sel.Name] && isGotestPkgRef(pass, sel.X) && len(call.Args) > 0 {
+	if assertionFuncName(pass, call.Fun) != "" && len(call.Args) > 0 {
 		arg := call.Args[0]
 		if inner, ok := arg.(*ast.CallExpr); ok && isTMethodCall(inner) {
 			reported[inner.Pos()] = true
@@ -530,37 +699,42 @@ func collectInterproceduralEscape(call *ast.CallExpr, tVars, gotestTVars map[str
 
 var gotestImportPath = about.Repo + "/pkg/gotest"
 
-func isGotestPkgRef(pass *analysis.Pass, expr ast.Expr) bool {
-	id, ok := expr.(*ast.Ident)
-	if !ok {
-		return false
+// assertionFuncName resolves fun to an exported gotest function whose first
+// parameter is the package's testingT interface — the assertion shape — and
+// returns its name. Deriving the surface from type information means the
+// linter can never drift from the API, and lookalike names from other
+// packages never match.
+func assertionFuncName(pass *analysis.Pass, fun ast.Expr) string {
+	var id *ast.Ident
+	switch fn := fun.(type) {
+	case *ast.SelectorExpr:
+		id = fn.Sel
+	case *ast.Ident:
+		id = fn
+	case *ast.IndexExpr:
+		return assertionFuncName(pass, fn.X)
+	case *ast.IndexListExpr:
+		return assertionFuncName(pass, fn.X)
+	default:
+		return ""
 	}
-	obj := pass.TypesInfo.Uses[id]
-	if obj == nil {
-		return false
+	fn, ok := pass.TypesInfo.Uses[id].(*types.Func)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != gotestImportPath {
+		return ""
 	}
-	pkgName, ok := obj.(*types.PkgName)
-	if !ok {
-		return false
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Params().Len() == 0 {
+		return ""
 	}
-	return pkgName.Imported().Path() == gotestImportPath
+	named, ok := sig.Params().At(0).Type().(*types.Named)
+	if !ok || named.Obj().Name() != "testingT" {
+		return ""
+	}
+	return fn.Name()
 }
 
 func isGotestTType(pass *analysis.Pass, field *ast.Field) bool {
-	typ := pass.TypesInfo.TypeOf(field.Type)
-	if typ == nil {
-		return false
-	}
-	ptr, ok := typ.(*types.Pointer)
-	if !ok {
-		return false
-	}
-	named, ok := ptr.Elem().(*types.Named)
-	if !ok {
-		return false
-	}
-	obj := named.Obj()
-	return obj.Name() == "T" && obj.Pkg() != nil && obj.Pkg().Path() == gotestImportPath
+	return namedPtrType(pass.TypesInfo.TypeOf(field.Type), gotestImportPath, "T")
 }
 
 // --- interprocedural method reachability ---
@@ -657,7 +831,7 @@ func (mr *methodReach) scanDirect(fd *ast.FuncDecl) {
 		case *ast.CallExpr:
 			sel, ok := node.Fun.(*ast.SelectorExpr)
 			if ok {
-				if _, ok := escapeConfigs[sel.Sel.Name]; ok {
+				if esc, ok := escapeConfigs[sel.Sel.Name]; ok && !esc.directOnly {
 					method := sel.Sel.Name
 					if id, ok := sel.X.(*ast.Ident); ok {
 						if idx, ok := aliases[id.Name]; ok {
@@ -838,7 +1012,7 @@ func checkOrphanedFiles(pass *analysis.Pass) {
 }
 
 func checkStdlibTests(pass *analysis.Pass, insp *inspector.Inspector) {
-	if cfg.skipStdlibTest {
+	if skipped(StdlibTest) {
 		return
 	}
 
@@ -863,15 +1037,12 @@ func checkStdlibTests(pass *analysis.Pass, insp *inspector.Inspector) {
 		if !isTestingT(fd.Type.Params.List[0].Type) {
 			return
 		}
-		if !cfg.disableNolint && docSuppressed(fd.Doc, StdlibTest) {
-			return
-		}
 		report(pass, StdlibTest, fd.Pos(), "stdlib test %s — consider using a gotest suite", name)
 	})
 }
 
 func checkTestifyImports(pass *analysis.Pass) {
-	if cfg.skipTestify {
+	if skipped(Testify) {
 		return
 	}
 
@@ -973,19 +1144,21 @@ func isLifecycleHook(name string) bool {
 
 // --- poll-scope check ---
 
-var pollScopeAssertionFuncs = map[string]bool{
+// foreignAssertionNames is deliberately syntactic and package-agnostic:
+// poll-scope is an integrity rule, and an assertion from a foreign library
+// (testify et al.) escaping the poll loop is exactly as broken as a gotest
+// one. This vocabulary cannot be derived from gotest's type information.
+var foreignAssertionNames = map[string]bool{
 	"Consistently": true, "Contains": true, "ElementsMatch": true,
 	"Empty": true, "Equal": true, "Error": true,
 	"ErrorAs": true, "ErrorContains": true, "ErrorIs": true,
-	"Eventually": true, "Fail": true, "False": true,
-	"Greater": true, "GreaterOrEqual": true, "InDelta": true,
-	"JSONEq": true, "Len": true, "Less": true,
-	"LessOrEqual": true, "MatchSnapshot": true, "Nil": true,
-	"NoError":     true,
-	"NotContains": true, "NotEmpty": true, "NotEqual": true,
-	"NotNil":  true,
-	"NotZero": true, "Panics": true, "Regexp": true,
-	"Subset": true, "TimeIsNow": true, "TimeWithin": true,
+	"Eventually": true, "Fail": true, "FailNow": true,
+	"False": true, "Greater": true, "GreaterOrEqual": true,
+	"InDelta": true, "JSONEq": true, "Len": true,
+	"Less": true, "LessOrEqual": true, "Nil": true,
+	"NoError": true, "NotContains": true, "NotEmpty": true,
+	"NotEqual": true, "NotNil": true, "NotZero": true,
+	"Panics": true, "Regexp": true, "Subset": true,
 	"True": true, "Zero": true,
 }
 
@@ -996,29 +1169,45 @@ var pollScopeMethodNames = map[string]bool{
 	"FailNow": true,
 }
 
-func checkPollScope(pass *analysis.Pass, insp *inspector.Inspector) {
+func checkPollScope(pass *analysis.Pass, insp *inspector.Inspector, cl *claims) {
 	insp.Preorder([]ast.Node{(*ast.CallExpr)(nil)}, func(n ast.Node) {
 		call := n.(*ast.CallExpr)
 
-		fnName := pollingFuncName(call)
-		if fnName == "" {
+		// A polling context needs both signals: an Eventually/Consistently
+		// callee shape (case-insensitive so wrappers and re-exports stay
+		// covered, package-agnostic by design) and a callback with a typed
+		// *gotest.R parameter (so foreign lookalike R types and other
+		// func(*R)-taking harnesses like Record stay excluded).
+		fnName := calleeName(call.Fun)
+		if !strings.EqualFold(fnName, "Eventually") && !strings.EqualFold(fnName, "Consistently") {
 			return
 		}
-
-		pollParam, funcLit := extractPollCallback(call)
+		pollParam, funcLit := extractPollCallback(pass, call)
 		if funcLit == nil {
 			return
 		}
 
 		ast.Inspect(funcLit.Body, func(n ast.Node) bool {
+			// A nested poll callback owns its subtree; it is visited by its
+			// own enclosing call.
+			if lit, ok := n.(*ast.FuncLit); ok && lit != funcLit && hasTypedRParam(pass, lit) {
+				return false
+			}
 			innerCall, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
 
-			// Case 1: gotest assertion with wrong first arg — gotest.Equal(t, ...) or Equal(t, ...)
-			if name := resolveAssertionName(innerCall.Fun); name != "" && len(innerCall.Args) > 0 {
+			// Case 1: assertion with wrong first arg — gotest.Equal(t, ...) or a
+			// foreign library's Equal(t, ...): integrity coverage is deliberately
+			// package-agnostic for assertion-shaped names.
+			name := assertionFuncName(pass, innerCall.Fun)
+			if name == "" && foreignAssertionNames[calleeName(innerCall.Fun)] {
+				name = calleeName(innerCall.Fun)
+			}
+			if name != "" && len(innerCall.Args) > 0 {
 				if ident, ok := innerCall.Args[0].(*ast.Ident); ok && ident.Name != pollParam {
+					cl.add(PollScope, innerCall.Pos())
 					report(pass, PollScope, ident.Pos(),
 						"use %s instead of %s in poll callback passed to %s",
 						pollParam, ident.Name, fnName)
@@ -1035,7 +1224,10 @@ func checkPollScope(pass *analysis.Pass, insp *inspector.Inspector) {
 			if !ok {
 				return true
 			}
-			if pollScopeMethodNames[sel.Sel.Name] && ident.Name != pollParam {
+			onTestT := namedPtrType(pass.TypesInfo.TypeOf(ident), "testing", "T") ||
+				namedPtrType(pass.TypesInfo.TypeOf(ident), gotestImportPath, "T")
+			if pollScopeMethodNames[sel.Sel.Name] && onTestT && ident.Name != pollParam {
+				cl.add(PollScope, innerCall.Pos())
 				report(pass, PollScope, ident.Pos(),
 					"%s.%s in poll callback bypasses assertion recording — use %s",
 					ident.Name, sel.Sel.Name, pollParam)
@@ -1045,21 +1237,14 @@ func checkPollScope(pass *analysis.Pass, insp *inspector.Inspector) {
 	})
 }
 
-func pollingFuncName(call *ast.CallExpr) string {
-	switch fn := call.Fun.(type) {
-	case *ast.SelectorExpr:
-		if fn.Sel.Name == "Eventually" || fn.Sel.Name == "Consistently" {
-			return fn.Sel.Name
-		}
-	case *ast.Ident:
-		if fn.Name == "Eventually" || fn.Name == "Consistently" {
-			return fn.Name
-		}
+func hasTypedRParam(pass *analysis.Pass, lit *ast.FuncLit) bool {
+	if lit.Type.Params == nil || len(lit.Type.Params.List) != 1 {
+		return false
 	}
-	return ""
+	return namedPtrType(pass.TypesInfo.TypeOf(lit.Type.Params.List[0].Type), gotestImportPath, "R")
 }
 
-func extractPollCallback(call *ast.CallExpr) (string, *ast.FuncLit) {
+func extractPollCallback(pass *analysis.Pass, call *ast.CallExpr) (string, *ast.FuncLit) {
 	if len(call.Args) == 0 {
 		return "", nil
 	}
@@ -1071,44 +1256,28 @@ func extractPollCallback(call *ast.CallExpr) (string, *ast.FuncLit) {
 	if funcLit.Type.Params == nil || len(funcLit.Type.Params.List) != 1 {
 		return "", nil
 	}
-	param := funcLit.Type.Params.List[0]
-	if !isStarR(param.Type) {
+	if !hasTypedRParam(pass, funcLit) {
 		return "", nil
 	}
+	param := funcLit.Type.Params.List[0]
 	if len(param.Names) == 0 {
 		return "", nil
 	}
 	return param.Names[0].Name, funcLit
 }
 
-func isStarR(expr ast.Expr) bool {
-	star, ok := expr.(*ast.StarExpr)
-	if !ok {
-		return false
-	}
-	switch x := star.X.(type) {
-	case *ast.Ident:
-		return x.Name == "R"
+// calleeName returns the last identifier of a call target, for matching and
+// messages that should be independent of qualification.
+func calleeName(fun ast.Expr) string {
+	switch fn := fun.(type) {
 	case *ast.SelectorExpr:
-		return x.Sel.Name == "R"
-	}
-	return false
-}
-
-func resolveAssertionName(expr ast.Expr) string {
-	switch fn := expr.(type) {
-	case *ast.SelectorExpr:
-		if pollScopeAssertionFuncs[fn.Sel.Name] {
-			return fn.Sel.Name
-		}
+		return fn.Sel.Name
 	case *ast.Ident:
-		if pollScopeAssertionFuncs[fn.Name] {
-			return fn.Name
-		}
+		return fn.Name
 	case *ast.IndexExpr:
-		return resolveAssertionName(fn.X)
+		return calleeName(fn.X)
 	case *ast.IndexListExpr:
-		return resolveAssertionName(fn.X)
+		return calleeName(fn.X)
 	}
 	return ""
 }

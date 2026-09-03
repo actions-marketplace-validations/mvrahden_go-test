@@ -24,15 +24,41 @@ func runSpec(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 	output := extractStringFlag(ownArgs, "--output", "")
 	input := extractStringFlag(ownArgs, "--input", "")
 	noColor := hasFlag(ownArgs, "--no-color")
+	renderOnly := hasFlag(ownArgs, "--render-only")
+
+	if hasFlag(ownArgs, "--static") && input != "" {
+		// One asks for the specification in the source, the other for the
+		// specification in a recorded run. Silently honouring --input would
+		// hand back a tree the caller did not ask for.
+		fmt.Fprintf(os.Stderr, "FAIL: --static and --input are mutually exclusive\n")
+		return 2
+	}
+
+	if renderOnly && input == "" {
+		// Suppressing the verdict of a real run would turn a red pipeline
+		// green. The flag only makes sense where the exit code describes a
+		// rendering, not a test run.
+		fmt.Fprintf(os.Stderr, "FAIL: --render-only requires --input\n")
+		return 2
+	}
 
 	if input != "" {
-		return runSpecFromInput(input, format, output, noColor)
+		return runSpecFromInput(input, format, output, noColor, renderOnly)
+	}
+
+	if hasFlag(ownArgs, "--static") {
+		// The specification is written in the source; reading it should not
+		// require executing it.
+		return runStaticSpec(ownArgs, goTestArgs, &inv.Config, format, output, noColor)
 	}
 
 	minCoverage, err := parseMinFlag(ownArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
+	}
+	if minCoverage == 0 && inv.Config.MinCoverage > 0 {
+		minCoverage = inv.Config.MinCoverage
 	}
 
 	goTestArgs, coverProfile, coverCleanup, err := ensureCoverProfile(goTestArgs, minCoverage)
@@ -50,7 +76,7 @@ func runSpec(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 
 	classified := gotestrunner.ClassifyGoTestArgs(goTestArgs)
 	loadFlags := gotestrunner.StripCoverBuildFlags(classified.BuildFlags)
-	loaded, err := gotestgen.LoadPackages(cfg.PackagePatterns, loadFlags)
+	loaded, broken, err := gotestgen.LoadPackages(cfg.PackagePatterns, loadFlags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
@@ -65,7 +91,7 @@ func runSpec(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 		}
 	}
 
-	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, cfg.Debug, cfg.NoCache)
+	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, broken, cfg.Debug, cfg.NoCache)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
@@ -110,7 +136,7 @@ func runSpec(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 		return 2
 	}
 
-	tree := gotestspec.BuildTree(events)
+	tree := gotestspec.BuildTree(events, gotestspec.WithDeclarations(buildDeclarationIndex(loaded)))
 
 	var w io.Writer = os.Stdout
 	if output != "" {
@@ -140,7 +166,7 @@ func runSpec(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 	return enforceCoverage(coverProfile, minCoverage, code)
 }
 
-func runSpecFromInput(input, format, output string, noColor bool) int {
+func runSpecFromInput(input, format, output string, noColor, renderOnly bool) int {
 	var r io.Reader
 	if input == "-" {
 		r = os.Stdin
@@ -187,5 +213,12 @@ func runSpecFromInput(input, format, output string, noColor bool) int {
 		gotestspec.RenderTerminal(w, tree, renderOpts...)
 	}
 
+	// The same exit rule as `summary --input`: a renderer fed a failing stream
+	// must not exit 0 — in a pipe without pipefail this exit code is the only
+	// verdict CI ever sees. A client that renders rather than gates opts out
+	// with --render-only; every operational failure above still exits 2.
+	if !renderOnly && gotestspec.HasFailures(tree) {
+		return 1
+	}
 	return 0
 }

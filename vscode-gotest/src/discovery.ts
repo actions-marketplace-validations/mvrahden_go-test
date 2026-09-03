@@ -1,16 +1,15 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import { access, readFile } from "node:fs/promises";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type {
   DiscoverOutput,
   DiscoverPackage,
   DiscoverWarning,
 } from "./types.js";
 import { buildCliCommand, clearBinaryCache, formatCliCommand } from "./cli.js";
-
-const execFileAsync = promisify(execFile);
+import { captureStdout, CaptureTimeoutError } from "./capture.js";
+import { discoveryTimeoutSeconds } from "./config.js";
+import type { DiscoverySnapshotStore } from "./discoverySnapshotStore.js";
 
 export class DiscoveryCache implements vscode.Disposable {
   private cache = new Map<string, DiscoverPackage>();
@@ -29,6 +28,10 @@ export class DiscoveryCache implements vscode.Disposable {
 
   get warnings(): DiscoverWarning[] {
     return this._warnings;
+  }
+
+  getWarnings(importPath: string): DiscoverWarning[] {
+    return this._warnings.filter((w) => w.importPath === importPath);
   }
 
   getPackage(importPath: string): DiscoverPackage | undefined {
@@ -61,6 +64,24 @@ export class DiscoveryCache implements vscode.Disposable {
     return this.moduleDirs.get(modulePath);
   }
 
+  /** Returns the packages discovered under a workspace dir. */
+  packagesForWorkspace(workspaceDir: string): DiscoverPackage[] {
+    const result: DiscoverPackage[] = [];
+    for (const [importPath, wsDir] of this.workspaceDirs) {
+      if (wsDir !== workspaceDir) continue;
+      const pkg = this.cache.get(importPath);
+      if (pkg) result.push(pkg);
+    }
+    return result;
+  }
+
+  /** Returns the warnings recorded for a workspace dir. */
+  warningsForWorkspace(workspaceDir: string): DiscoverWarning[] {
+    return this._warnings
+      .filter((w) => w._wsDir === workspaceDir)
+      .map(({ _wsDir, ...warning }) => warning);
+  }
+
   /** Returns unique module paths for packages within a workspace dir. */
   getModules(workspaceDir: string): string[] {
     const modules = new Set<string>();
@@ -91,11 +112,26 @@ export class DiscoveryCache implements vscode.Disposable {
         }
       }
     }
-    for (const pkg of packages) {
-      const prev = this.cache.get(pkg.importPath);
+    for (const incoming of packages) {
+      const prev = this.cache.get(incoming.importPath);
+      // A broken package's suite list is unknowable, not empty: discovery
+      // needs a successful parse. The last known suites are kept so the test
+      // tree holds its shape while the package is being edited; the broken
+      // flag travels with them so the UI can mark the package instead of
+      // silently dropping its tests.
+      const pkg =
+        incoming.broken && prev
+          ? {
+              ...incoming,
+              suites: prev.suites,
+              dir: incoming.dir || prev.dir,
+              modulePath: incoming.modulePath ?? prev.modulePath,
+              testOnly: prev.testOnly,
+            }
+          : incoming;
       if (prev && prev.dir !== pkg.dir) this.dirIndex.delete(prev.dir);
       this.cache.set(pkg.importPath, pkg);
-      this.dirIndex.set(pkg.dir, pkg.importPath);
+      if (pkg.dir) this.dirIndex.set(pkg.dir, pkg.importPath);
       this.workspaceDirs.set(pkg.importPath, workspaceDir);
       if (pkg.modulePath) {
         this.pkgModules.set(pkg.importPath, pkg.modulePath);
@@ -135,6 +171,7 @@ export class DiscoveryService {
   constructor(
     private readonly cache: DiscoveryCache,
     private readonly outputChannel: vscode.LogOutputChannel,
+    private readonly snapshots?: DiscoverySnapshotStore,
   ) {}
 
   async discover(workspaceDir: string, patterns?: string[]): Promise<void> {
@@ -243,21 +280,53 @@ export class DiscoveryService {
           workspaceDir,
           this.outputChannel,
         );
-        this.outputChannel.info(`[discovery] ${formatCliCommand(cmd)}`);
+        this.outputChannel.info(
+          `[discovery] ${formatCliCommand(cmd)} (cwd ${workspaceDir})`,
+        );
 
-        const { stdout } = await execFileAsync(cmd.bin, cmd.args, {
+        // Timed in three parts because they fail differently: a slow build is
+        // the toolchain's, a slow first-to-last byte is the CLI's, and slow
+        // parse/index time is ours. One total would hide which.
+        const startedAt = Date.now();
+        let firstByteMs = -1;
+        const stdout = await captureStdout(cmd.bin, cmd.args, {
           cwd: workspaceDir,
-          timeout: 30_000,
+          timeoutSeconds: discoveryTimeoutSeconds(workspaceDir),
+          onFirstByte: (ms) => {
+            firstByteMs = ms;
+          },
         });
+        const childMs = Date.now() - startedAt;
 
         const jsonStart = stdout.indexOf("{");
         const json = jsonStart > 0 ? stdout.substring(jsonStart) : stdout;
         const output: DiscoverOutput = JSON.parse(json);
+        const parsedMs = Date.now() - startedAt - childMs;
         const fullScan = effectivePatterns.some((p) => p.includes("..."));
         const warnings = output.warnings ?? [];
         const packages = output.packages ?? [];
+        const indexStartedAt = Date.now();
         this.cache.update(packages, fullScan, workspaceDir, warnings);
+        const indexMs = Date.now() - indexStartedAt;
+        const suites = packages.reduce(
+          (n, p) => n + (p.suites?.length ?? 0),
+          0,
+        );
+        this.outputChannel.info(
+          `[discovery] ${packages.length} package(s), ${suites} suite(s) in ` +
+            `${childMs}ms child (${firstByteMs < 0 ? "no output" : `${firstByteMs}ms to first byte`}), ` +
+            `${parsedMs}ms parse of ${Buffer.byteLength(stdout)}B, ${indexMs}ms index`,
+        );
         this.hasShownError = false;
+        // Snapshot the workspace, not the response: this run may have matched
+        // a single package, and a snapshot standing in for the whole tree has
+        // to describe the whole tree.
+        this.snapshots?.update(
+          workspaceDir,
+          this.cache.packagesForWorkspace(workspaceDir),
+          this.cache.warningsForWorkspace(workspaceDir),
+        );
+        this.snapshots?.save();
         for (const w of warnings) {
           const loc = w.file ? ` (${w.file}:${w.line ?? 0})` : "";
           this.outputChannel.warn(
@@ -272,7 +341,11 @@ export class DiscoveryService {
         if (isENOENT) {
           clearBinaryCache();
         }
-        if (attempt < DiscoveryService.MAX_RETRIES) {
+        // A timeout already spent the whole budget. Retrying spends it twice
+        // more for the same answer and pushes the first error the user sees
+        // out past six minutes.
+        const retryable = !(err instanceof CaptureTimeoutError);
+        if (retryable && attempt < DiscoveryService.MAX_RETRIES) {
           this.outputChannel.debug(
             `[discovery] attempt ${attempt}/${DiscoveryService.MAX_RETRIES} failed, retrying: ${message}`,
           );
@@ -281,13 +354,21 @@ export class DiscoveryService {
           continue;
         }
         this.outputChannel.error(
-          `[discovery] failed after ${DiscoveryService.MAX_RETRIES} attempts: ${message}`,
+          retryable
+            ? `[discovery] failed after ${DiscoveryService.MAX_RETRIES} attempts: ${message}`
+            : `[discovery] failed: ${message}`,
         );
         if (!this.hasShownError) {
           this.hasShownError = true;
+          // Say what went wrong. The advice below is right for a missing
+          // toolchain and misleading for everything else — a timeout, a
+          // package that will not load — which is most of what lands here.
+          const advice = isENOENT
+            ? " Ensure 'go' is installed and the gotest module is accessible."
+            : "";
           vscode.window
             .showWarningMessage(
-              `gotest: discovery failed. Ensure 'go' is installed and the gotest module is accessible.`,
+              `gotest: discovery failed: ${message.split("\n")[0]}.${advice}`,
               "Open Output",
             )
             .then((choice) => {
@@ -296,6 +377,7 @@ export class DiscoveryService {
               }
             });
         }
+        return;
       }
     }
   }

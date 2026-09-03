@@ -28,9 +28,15 @@ func runSummary(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 	coverageProfile := extractStringFlag(ownArgs, "--coverage", "")
 	noColor := hasFlag(ownArgs, "--no-color")
 	github := hasFlag(ownArgs, "--github") || os.Getenv("GITHUB_ACTIONS") == "true"
+	renderOnly := hasFlag(ownArgs, "--render-only")
+
+	if renderOnly && input == "" {
+		fmt.Fprintf(os.Stderr, "FAIL: --render-only requires --input\n")
+		return 2
+	}
 
 	if input != "" {
-		return runSummaryFromInput(input, format, output, coverageProfile, noColor, github)
+		return runSummaryFromInput(input, format, output, coverageProfile, noColor, github, renderOnly)
 	}
 
 	minCoverage, err := parseMinFlag(ownArgs)
@@ -57,7 +63,7 @@ func runSummary(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 
 	classified := gotestrunner.ClassifyGoTestArgs(goTestArgs)
 	loadFlags := gotestrunner.StripCoverBuildFlags(classified.BuildFlags)
-	loaded, err := gotestgen.LoadPackages(cfg.PackagePatterns, loadFlags)
+	loaded, broken, err := gotestgen.LoadPackages(cfg.PackagePatterns, loadFlags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
@@ -72,7 +78,7 @@ func runSummary(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 		}
 	}
 
-	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, cfg.Debug, cfg.NoCache)
+	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, broken, cfg.Debug, cfg.NoCache)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
@@ -118,7 +124,7 @@ func runSummary(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 		return 2
 	}
 
-	tree := gotestspec.BuildTree(events)
+	tree := gotestspec.BuildTree(events, gotestspec.WithDeclarations(buildDeclarationIndex(loaded)))
 
 	if coverageProfile == "" {
 		for _, arg := range goTestArgs {
@@ -134,7 +140,7 @@ func runSummary(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 	return enforceCoverage(coverProfile, minCoverage, code)
 }
 
-func runSummaryFromInput(input, format, output, coverageProfile string, noColor, github bool) int {
+func runSummaryFromInput(input, format, output, coverageProfile string, noColor, github, renderOnly bool) int {
 	var r io.Reader
 	if input == "-" {
 		r = os.Stdin
@@ -158,14 +164,8 @@ func runSummaryFromInput(input, format, output, coverageProfile string, noColor,
 
 	writeSummaryOutput(tree, format, output, coverageProfile, noColor, github, 0)
 
-	stats := gotestspec.CollectStats(tree)
-	if stats.Failed > 0 {
+	if !renderOnly && gotestspec.HasFailures(tree) {
 		return 1
-	}
-	for _, pkg := range tree {
-		if pkg.Status == gotestspec.StatusFail {
-			return 1
-		}
 	}
 	return 0
 }

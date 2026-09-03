@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,8 +27,12 @@ type OutputCollector struct {
 	flushed  int
 	worst    int
 	captured bytes.Buffer
-	stdout   io.Writer
-	stderr   io.Writer
+
+	// StdlibTestsByPkg lets Finalize distinguish packages that truly have no
+	// test files from packages whose tests gotest does not run (stdlib tests).
+	StdlibTestsByPkg map[string]int
+	stdout           io.Writer
+	stderr           io.Writer
 }
 
 type pkgState struct {
@@ -100,6 +105,16 @@ func (c *OutputCollector) Register(pkg string, count int) {
 func (c *OutputCollector) RecordResult(pkg string, idx int, r SuiteResult) { //nolint:gocritic // hugeParam: stable API
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// A signal-terminated binary reports -1, which the worst-code comparison
+	// below never registers — a suite OOM-killed mid-run exited the whole run
+	// green in text mode. Failure is any nonzero status: normalize the signal
+	// case to a positive code at this choke point so every downstream
+	// comparison agrees, and say what happened, because the binary's own
+	// output ends mid-stream with no verdict of its own.
+	if r.ExitCode < 0 {
+		r.ExitCode = 1
+		r.Stderr = append(r.Stderr, []byte("gotest: suite binary terminated by signal\n")...)
+	}
 	if r.ExitCode > c.worst {
 		c.worst = r.ExitCode
 	}
@@ -122,6 +137,28 @@ func (c *OutputCollector) RecordResult(pkg string, idx int, r SuiteResult) { //n
 	}
 }
 
+// RecordBuildFailure books a package that failed to build as a failed package
+// with exit code 2 — the code reserved for build errors, distinct from exit 1
+// for tests that ran and failed. Build failures travel the same collector path
+// as suite results so text output, the JSON stream, and the exit code cannot
+// disagree about them. In JSON modes the diagnostics enter the stream as
+// package-level output events; renderers fed the stream (spec, summary,
+// --input replays) carry them without any side channel.
+func (c *OutputCollector) RecordBuildFailure(pkg, msg string) {
+	c.Register(pkg, 1)
+	if c.mode != RunBatchText {
+		c.mu.Lock()
+		w := c.jsonWriter()
+		now := time.Now()
+		writeJSONLine(w, map[string]any{"Time": now, "Action": "start", "Package": pkg})
+		for line := range strings.Lines(msg) {
+			writeJSONLine(w, map[string]any{"Time": now, "Action": "output", "Package": pkg, "Output": line})
+		}
+		c.mu.Unlock()
+	}
+	c.RecordResult(pkg, 0, SuiteResult{Stderr: []byte(msg), ExitCode: 2})
+}
+
 // Finalize emits trailing annotations after all suites have run.
 // For RunBatchText: drains remaining completed packages, writes [no test files]
 // annotations, and emits trailing FAIL. For JSON / captured modes: no-op.
@@ -140,7 +177,13 @@ func (c *OutputCollector) Finalize(noTestFilePkgs []string) {
 		}
 	}
 	for _, pkg := range noTestFilePkgs {
-		fmt.Fprintf(c.stdout, "?   \t%s\t[no test files]\n", pkg)
+		note := "[no test files]"
+		if c.StdlibTestsByPkg[pkg] > 0 {
+			// The package has stdlib tests — gotest runs suites only, so
+			// "[no test files]" would be a lie. Point at the truth instead.
+			note = "[no suites]"
+		}
+		fmt.Fprintf(c.stdout, "?   \t%s\t%s\n", pkg, note)
 	}
 	if c.anyFailedLocked() {
 		fmt.Fprintln(c.stdout, "FAIL")

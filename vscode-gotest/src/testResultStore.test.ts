@@ -93,6 +93,26 @@ describe("TestResultStore", () => {
       });
     });
 
+    // The Test Explorer's "Clear all results" is in-memory only. Unless the
+    // persisted copy is cleared too, the next window reload restores exactly
+    // the results the developer just dismissed.
+    it("clear empties the store and does not restore on reload", async () => {
+      const writer = new TestResultStore({ fsPath: tmpDir });
+      writer.record("pkg/one", "pass");
+      writer.record("pkg/two", "fail");
+      writer.save();
+      await writer.flush();
+
+      writer.clear();
+      await writer.flush();
+      expect(writer.size).toBe(0);
+
+      const reader = new TestResultStore({ fsPath: tmpDir });
+      await reader.load();
+      expect(reader.size).toBe(0);
+      expect(reader.get("pkg/one")).toBeUndefined();
+    });
+
     it("load handles missing file gracefully", async () => {
       const s = new TestResultStore({ fsPath: tmpDir });
       await expect(s.load()).resolves.toBeUndefined();
@@ -117,8 +137,7 @@ describe("TestResultStore", () => {
       const filePath = path.join(tmpDir, "testResults.json");
       const raw = await readFile(filePath, "utf-8");
       const data = JSON.parse(raw);
-      data.results["pkg/stale"].timestamp =
-        Date.now() - 8 * 24 * 60 * 60 * 1000;
+      data.data["pkg/stale"].timestamp = Date.now() - 8 * 24 * 60 * 60 * 1000;
       await writeFile(filePath, JSON.stringify(data), "utf-8");
 
       const reader = new TestResultStore({ fsPath: tmpDir });

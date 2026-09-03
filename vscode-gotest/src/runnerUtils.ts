@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { killProcessTree } from "./processTree.js";
+import { ManagedChild } from "./managedChild.js";
 import { readFile } from "node:fs/promises";
 import type { GoTestController } from "./testController.js";
 import type { DiscoveryCache } from "./discovery.js";
@@ -12,20 +13,7 @@ import {
   type TestEvent,
 } from "./outputParser.js";
 
-export function killProcessTree(
-  child: ChildProcess,
-  signal: NodeJS.Signals = "SIGTERM",
-): void {
-  if (child.pid && process.platform !== "win32") {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // process group already exited
-    }
-  }
-  child.kill(signal);
-}
+export { killProcessTree };
 
 export function enqueueDescendants(
   run: vscode.TestRun,
@@ -161,12 +149,39 @@ export function expandToPackages(items: vscode.TestItem[]): vscode.TestItem[] {
   return result.length > 0 ? result : items;
 }
 
+// splitTestPath cuts a go test name into its subtest levels. A single slash
+// separates levels, but a run of them does not: `t.When("https:// URI")` is one
+// subtest whose name happens to contain slashes, and go test reports it that
+// way. Splitting on every slash invented two levels that no run ever produced,
+// so an observed result landed beside its declared behavior instead of on it.
+// The CLI applies the identical rule on both sides of the boundary.
+function splitTestPath(path: string): string[] {
+  const segments: string[] = [];
+  let cur = "";
+  for (let i = 0; i < path.length; i++) {
+    const isSeparator =
+      path[i] === "/" &&
+      (i + 1 >= path.length || path[i + 1] !== "/") &&
+      (i === 0 || path[i - 1] !== "/");
+    if (isSeparator) {
+      segments.push(cur);
+      cur = "";
+    } else {
+      cur += path[i];
+    }
+  }
+  if (cur.length > 0) {
+    segments.push(cur);
+  }
+  return segments;
+}
+
 export function resolveTestItem(
   controller: GoTestController,
   testPath: string,
   importPath: string,
 ): vscode.TestItem | undefined {
-  const segments = testPath.split("/");
+  const segments = splitTestPath(testPath);
   if (segments.length === 0) {
     return undefined;
   }
@@ -199,13 +214,11 @@ export function resolveTestItem(
 
   let parentItem = methodItem;
   for (let i = 2; i < segments.length; i++) {
-    const subtestLabel = segments[i];
-    const subtestPath = segments.slice(2, i + 1).join("/");
-    parentItem = controller.createDynamicSubtest(
-      parentItem,
-      subtestPath,
-      subtestLabel,
-    );
+    const segment = segments[i];
+    // One segment per level: the id is the go test path, which is also what a
+    // statically declared behavior uses. createDynamicSubtest returns the
+    // declared item when there is one and only fabricates when there is not.
+    parentItem = controller.createDynamicSubtest(parentItem, segment, segment);
   }
 
   return parentItem;
@@ -288,11 +301,15 @@ export function applyEvent(
 
   const duration =
     event.Elapsed !== undefined ? event.Elapsed * 1000 : undefined;
+  // The event's own clock, not ours: it brackets the node against every other
+  // node in the stream, including ones from suites running in other processes.
+  const stamp = Date.parse(event.Time);
+  const at = Number.isNaN(stamp) ? undefined : stamp;
 
   switch (event.Action) {
     case "pass":
       run.passed(item, duration);
-      controller.recordResult(item.id, "pass", duration);
+      controller.recordResult(item.id, "pass", duration, at);
       return { itemId: item.id, status: "pass", duration };
     case "fail": {
       const output = outputMap.get(event.Test) ?? "";
@@ -326,15 +343,24 @@ export function applyEvent(
         vscodeMessages.push(fallback);
       }
       run.failed(item, vscodeMessages, duration);
-      controller.recordResult(item.id, "fail", duration);
+      controller.recordResult(item.id, "fail", duration, at);
       return { itemId: item.id, status: "fail", duration };
     }
     case "skip":
       run.skipped(item);
-      controller.recordResult(item.id, "skip", undefined);
+      controller.recordResult(item.id, "skip", undefined, at);
       return { itemId: item.id, status: "skip", duration: undefined };
     case "run":
       run.started(item);
+      if (at !== undefined) {
+        controller.noteStart(item.id, at);
+      }
+      return undefined;
+    case "pause":
+    case "cont":
+      // The node called t.Parallel. That is the one fact its own timestamps
+      // cannot survive, so it has to be carried alongside them.
+      controller.notePaused(item.id);
       return undefined;
   }
 
@@ -370,7 +396,7 @@ export interface SpawnResult {
   exitCode: number;
 }
 
-export function spawnTestProcess(
+export async function spawnTestProcess(
   bin: string,
   args: string[],
   cwd: string,
@@ -380,81 +406,72 @@ export function spawnTestProcess(
   env?: Record<string, string>,
   onStdoutLine?: (line: string) => void,
 ): Promise<SpawnResult> {
-  return new Promise<SpawnResult>((resolve, reject) => {
-    const child = spawn(bin, args, {
-      cwd,
-      env: env ? { ...process.env, ...env } : undefined,
-      detached: true,
-    });
-    let stdout = "";
-    let stderr = "";
-    let lineBuffer = "";
-    let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  const mc = new ManagedChild(bin, args, { cwd, env, kind: "test" });
+  let stdout = "";
+  let stderr = "";
+  let lineBuffer = "";
+  let spawnError: Error | undefined;
 
-    child.stdout.on("data", (data: Buffer) => {
-      const chunk = data.toString();
-      stdout += chunk;
+  // Line assembly is the caller's job: ManagedChild decodes the stream so a
+  // character split across two reads survives, but what counts as an event is
+  // specific to this surface.
+  mc.child.stdout?.on("data", (chunk: string) => {
+    stdout += chunk;
 
-      if (onStdoutLine) {
-        lineBuffer += chunk;
-        const lines = lineBuffer.split("\n");
-        lineBuffer = lines.pop() ?? "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed) {
-            onStdoutLine(trimmed);
-          }
+    if (onStdoutLine) {
+      lineBuffer += chunk;
+      const lines = lineBuffer.split("\n");
+      lineBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed) {
+          onStdoutLine(trimmed);
         }
       }
-    });
-
-    child.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    const cancelListener = token.onCancellationRequested(() => {
-      outputChannel.info(
-        `[${label}] cancellation requested, sending SIGTERM (pid ${child.pid})`,
-      );
-      killProcessTree(child, "SIGTERM");
-      const killTimeout =
-        vscode.workspace
-          .getConfiguration("gotest")
-          .get<number>("forceKillTimeout", 600) * 1000;
-      forceKillTimer = setTimeout(() => {
-        outputChannel.warn(
-          `[${label}] process did not exit after SIGTERM, sending SIGKILL`,
-        );
-        killProcessTree(child, "SIGKILL");
-      }, killTimeout);
-    });
-
-    child.on("close", (code) => {
-      if (forceKillTimer) clearTimeout(forceKillTimer);
-      cancelListener.dispose();
-      if (onStdoutLine) {
-        const remaining = lineBuffer.trim();
-        if (remaining) {
-          onStdoutLine(remaining);
-        }
-      }
-      if (stderr) {
-        for (const line of stderr.split("\n")) {
-          if (line.trim()) {
-            outputChannel.warn(`[${label}] stderr: ${line}`);
-          }
-        }
-      }
-      resolve({ stdout, stderr, exitCode: code ?? 1 });
-    });
-
-    child.on("error", (err: Error) => {
-      if (forceKillTimer) clearTimeout(forceKillTimer);
-      cancelListener.dispose();
-      outputChannel.error(`[${label}] ${err.message}`);
-      reject(err);
-    });
+    }
   });
+
+  mc.child.stderr?.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+
+  mc.child.on("error", (err: Error) => {
+    spawnError = err;
+  });
+
+  // A run: SIGTERM is what starts fixture teardown, so it gets the teardown
+  // grace rather than the prompt one.
+  const cancelListener = token.onCancellationRequested(() => {
+    outputChannel.info(
+      `[${label}] cancellation requested, sending SIGTERM (pid ${mc.pid})`,
+    );
+    void mc.terminate("teardown");
+  });
+
+  try {
+    const { code } = await mc.exited;
+    if (spawnError) {
+      outputChannel.error(`[${label}] ${spawnError.message}`);
+      throw spawnError;
+    }
+    if (onStdoutLine) {
+      const remaining = lineBuffer.trim();
+      if (remaining) {
+        onStdoutLine(remaining);
+      }
+    }
+    if (stderr) {
+      for (const line of stderr.split("\n")) {
+        if (line.trim()) {
+          outputChannel.warn(`[${label}] stderr: ${line}`);
+        }
+      }
+    }
+    return { stdout, stderr, exitCode: code ?? 1 };
+  } finally {
+    cancelListener.dispose();
+    mc.dispose();
+  }
 }
 
 export function buildRunFilter(items: vscode.TestItem[]): string | undefined {
@@ -490,7 +507,11 @@ export function buildRunFilter(items: vscode.TestItem[]): string | undefined {
       let current = item;
       const subtestParts: string[] = [];
       while (getPackageDepth(current) > 2) {
-        subtestParts.unshift(current.label);
+        // The id segment, not the label: a behavior is labelled with the text
+        // the developer wrote ("classifying a number") while go test knows it
+        // by its rewritten name ("classifying_a_number"). Filtering on the
+        // label would never match.
+        subtestParts.unshift(subtestSegmentOf(current));
         current = current.parent!;
       }
       const methodName = current.label;
@@ -501,7 +522,9 @@ export function buildRunFilter(items: vscode.TestItem[]): string | undefined {
         suiteGroups.set(suiteName, group);
       }
       group.subtests.push(
-        `^Test${suiteName}$/^${methodName}$/^${subtestParts.join("/")}$`,
+        `^Test${suiteName}$/^${methodName}$/^${subtestParts
+          .map(escapeRunPattern)
+          .join("/")}$`,
       );
     }
   }
@@ -742,4 +765,22 @@ function resolveItemRecursive(
   }
 
   return { anyFailed, anyResolved };
+}
+
+// subtestSegmentOf returns the single go test path segment an item adds to its
+// parent. Ids are the test path, so the segment is what follows the parent's id.
+function subtestSegmentOf(item: vscode.TestItem): string {
+  const parentId = item.parent?.id;
+  if (parentId && item.id.startsWith(parentId + "/")) {
+    return item.id.slice(parentId.length + 1);
+  }
+  return item.label;
+}
+
+// escapeRunPattern quotes regex metacharacters in a subtest name. Behavior
+// descriptions are prose — "handles (nested) values" is an ordinary thing to
+// write — and go test's -run is a regular expression, so the name has to be
+// matched literally rather than interpreted.
+function escapeRunPattern(segment: string): string {
+  return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

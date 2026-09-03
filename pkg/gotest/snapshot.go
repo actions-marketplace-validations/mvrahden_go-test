@@ -57,6 +57,15 @@ func fileMutex(path string) *sync.Mutex {
 	return mu.(*sync.Mutex)
 }
 
+// indentJSON pretty-prints valid JSON; anything else is returned verbatim.
+func indentJSON(b []byte) string {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, b, "", "  "); err != nil {
+		return string(b)
+	}
+	return buf.String()
+}
+
 func snapshotContent(value any) (string, error) {
 	if value == nil {
 		return "", fmt.Errorf("unsupported snapshot value: nil")
@@ -69,6 +78,10 @@ func snapshotContent(value any) (string, error) {
 		return v, nil
 	case []byte:
 		return string(v), nil
+	case json.RawMessage:
+		// Explicit: since Go 1.27 (jsonv2) RawMessage aliases jsontext.Value,
+		// which has String() and would otherwise take the Stringer branch.
+		return indentJSON(v), nil
 	case encoding.TextMarshaler:
 		b, err := v.MarshalText()
 		if err != nil {
@@ -82,11 +95,7 @@ func snapshotContent(value any) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("MarshalJSON failed: %w", err)
 		}
-		var buf bytes.Buffer
-		if err := json.Indent(&buf, b, "", "  "); err == nil {
-			return buf.String(), nil
-		}
-		return string(b), nil
+		return indentJSON(b), nil
 	case error:
 		return v.Error(), nil
 	case io.Reader:
@@ -129,7 +138,7 @@ func matchSnapshot(t testingT, callerSkip int, value any, name ...string) {
 	named, ok := t.(interface{ Name() string })
 	if !ok {
 		gt, ok := t.(*T)
-		if ok {
+		if ok && gt.T() != nil {
 			named = gt.T()
 		}
 	}
@@ -218,7 +227,7 @@ func matchSnapshot(t testingT, callerSkip int, value any, name ...string) {
 // Opt-out with GOTEST_CI=0 when baseline generation is intentional in CI.
 func snapshotReadonly() bool {
 	v := os.Getenv(protocol.EnvCI)
-	return v == "1" || v == "true"
+	return v != "" && v != "0" && v != "false"
 }
 
 func splitTestName(name string) (topLevel, rest string) {

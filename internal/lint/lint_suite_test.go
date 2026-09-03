@@ -13,66 +13,51 @@ func (s *LintTestSuite) SuiteConfig() gotest.SuiteConfig {
 	return gotest.SuiteConfig{Parallel: true}
 }
 
-func (s *LintTestSuite) TestAnalyzer(t *gotest.T) {
-	testdata := analysistest.TestData()
+// analysistest type-checks the fixture package and everything it imports, which
+// dwarfs the analysis itself: a package loaded on its own measured ~2.2s against
+// ~0.2s marginal once batched into a shared load. So the rules are grouped by
+// call, not split by rule.
+//
+// Two calls because a call has one mode. Checking fixes over the whole set would
+// demand a .golden for every broad fixture, tying sample's expected rewrite to
+// the fix output of every rule that fires in it.
 
-	t.When("sample code", func(w *gotest.T) {
-		w.It("detects violations", func(it *gotest.T) {
-			analysistest.Run(it.T(), testdata, lint.Analyzer, "sample")
+// diagnosticFixtures are the packages whose want comments are the whole
+// expectation; none of them records a suggested fix.
+var diagnosticFixtures = []string{
+	"sample",
+	"withtestify",
+	"withnolint",
+	"withforeign",
+	"withpollscope",
+	"withcleanup",
+	"withdirectcalls",
+	"withnolint_file",
+	"withsharedfixture",
+}
+
+// rewriteFixtures are the packages that additionally pin the rewrite a rule
+// offers, each against its own .golden.
+var rewriteFixtures = []string{
+	"withsimplify",
+	"withfailguard",
+	"withfailguard_noimport",
+	"withredundant",
+	"withtescape",
+}
+
+func (s *LintTestSuite) TestDiagnostics(t *gotest.T) {
+	t.When("every rule's fixture package", func(w *gotest.T) {
+		w.It("reports exactly the diagnostics its want comments declare", func(it *gotest.T) {
+			analysistest.Run(it.T(), analysistest.TestData(), lint.Analyzer, diagnosticFixtures...)
 		})
 	})
+}
 
-	t.When("testify imports", func(w *gotest.T) {
-		w.It("detects testify usage", func(it *gotest.T) {
-			analysistest.Run(it.T(), testdata, lint.Analyzer, "withtestify")
-		})
-	})
-
-	t.When("nolint comments", func(w *gotest.T) {
-		w.It("respects inline nolint", func(it *gotest.T) {
-			analysistest.Run(it.T(), testdata, lint.Analyzer, "withnolint")
-		})
-	})
-
-	t.When("poll scope", func(w *gotest.T) {
-		w.It("detects poll scope violations", func(it *gotest.T) {
-			analysistest.Run(it.T(), testdata, lint.Analyzer, "withpollscope")
-		})
-	})
-
-	t.When("assertion simplify", func(w *gotest.T) {
-		w.It("detects sub-optimal assertion patterns", func(it *gotest.T) {
-			analysistest.RunWithSuggestedFixes(it.T(), testdata, lint.Analyzer, "withsimplify")
-		})
-	})
-
-	t.When("assertion redundant", func(w *gotest.T) {
-		w.It("detects redundant guard assertions before stronger ones", func(it *gotest.T) {
-			analysistest.RunWithSuggestedFixes(it.T(), testdata, lint.Analyzer, "withredundant")
-		})
-	})
-
-	t.When("suite cleanup", func(w *gotest.T) {
-		w.It("detects .T().Cleanup in suite methods", func(it *gotest.T) {
-			analysistest.Run(it.T(), testdata, lint.Analyzer, "withcleanup")
-		})
-	})
-
-	t.When("suite direct calls", func(w *gotest.T) {
-		w.It("detects T.Parallel and T.Run in suite methods", func(it *gotest.T) {
-			analysistest.Run(it.T(), testdata, lint.Analyzer, "withdirectcalls")
-		})
-	})
-
-	t.When("t escape", func(w *gotest.T) {
-		w.It("detects unnecessary .T() escape and applies fixes", func(it *gotest.T) {
-			analysistest.RunWithSuggestedFixes(it.T(), testdata, lint.Analyzer, "withtescape")
-		})
-	})
-
-	t.When("file-level nolint", func(w *gotest.T) {
-		w.It("respects file-level nolint", func(it *gotest.T) {
-			analysistest.Run(it.T(), testdata, lint.Analyzer, "withnolint_file")
+func (s *LintTestSuite) TestSuggestedFixes(t *gotest.T) {
+	t.When("a rule that offers a rewrite", func(w *gotest.T) {
+		w.It("produces the fix recorded in the golden file", func(it *gotest.T) {
+			analysistest.RunWithSuggestedFixes(it.T(), analysistest.TestData(), lint.Analyzer, rewriteFixtures...)
 		})
 	})
 }
@@ -83,6 +68,23 @@ func (s *LintTestSuite) TestDisableNolintFlag(t *gotest.T) {
 			f := lint.Analyzer.Flags.Lookup("disable-nolint")
 			gotest.NotZero(it, f)
 			gotest.Equal(it, "false", f.DefValue)
+		})
+	})
+}
+
+func (s *LintTestSuite) TestTierPolicy(t *gotest.T) {
+	t.When("tier-derived skip surface", func(w *gotest.T) {
+		w.It("registers a skip flag for every non-integrity rule and none for integrity rules", func(it *gotest.T) {
+			for _, rule := range []lint.Rule{lint.StdlibTest, lint.Testify, lint.AssertionSimplify, lint.AssertionRedundant, lint.FailGuard, lint.TEscape} {
+				gotest.NotZero(it, lint.Analyzer.Flags.Lookup("skip-"+string(rule)), "missing skip flag for %s", rule)
+				gotest.True(it, lint.SkippableRules[rule], "rule %s should be skippable", rule)
+			}
+			for _, rule := range []lint.Rule{lint.Focus, lint.PollScope, lint.TestSignature, lint.SuiteLifecycle, lint.SharedFixtureUndeclared} {
+				gotest.Zero(it, lint.Analyzer.Flags.Lookup("skip-"+string(rule)), "unexpected skip flag for %s", rule)
+				gotest.False(it, lint.SkippableRules[rule], "integrity rule %s must not be skippable", rule)
+			}
+			gotest.True(it, lint.Known(lint.Focus))
+			gotest.False(it, lint.Known(lint.Rule("nope")))
 		})
 	})
 }
@@ -127,15 +129,49 @@ func (s *LintTestSuite) TestParseNolint(t *gotest.T) {
 	}
 }
 
+// SkippedStyleTestSuite runs separately and non-parallel because it
+// temporarily mutates the shared analyzer flags.
+type SkippedStyleTestSuite struct{}
+
+func (s *SkippedStyleTestSuite) BeforeEach(_ *gotest.T) { lint.ExportSetSkip(lint.FailGuard, true) }
+func (s *SkippedStyleTestSuite) AfterEach(_ *gotest.T)  { lint.ExportSetSkip(lint.FailGuard, false) }
+
+func (s *SkippedStyleTestSuite) TestSkipSilencesExpressivenessRule(t *gotest.T) {
+	testdata := analysistest.TestData()
+
+	t.When("skip-fail-guard is set", func(w *gotest.T) {
+		w.It("reports nothing for fail-guard findings", func(it *gotest.T) {
+			analysistest.Run(it.T(), testdata, lint.Analyzer, "withskippedstyle")
+		})
+	})
+}
+
+// SkippedEscapeTestSuite runs separately and non-parallel because it
+// temporarily mutates the shared analyzer flags.
+type SkippedEscapeTestSuite struct{}
+
+func (s *SkippedEscapeTestSuite) BeforeEach(_ *gotest.T) { lint.ExportSetSkip(lint.TEscape, true) }
+func (s *SkippedEscapeTestSuite) AfterEach(_ *gotest.T)  { lint.ExportSetSkip(lint.TEscape, false) }
+
+func (s *SkippedEscapeTestSuite) TestSkippedRuleReleasesClaims(t *gotest.T) {
+	testdata := analysistest.TestData()
+
+	t.When("skip-t-escape is set", func(w *gotest.T) {
+		w.It("lets fail-guard take over escaped halting guards", func(it *gotest.T) {
+			analysistest.Run(it.T(), testdata, lint.Analyzer, "withskippedtescape")
+		})
+	})
+}
+
 // DisableNolintTestSuite runs separately and non-parallel because it
-// temporarily mutates the shared analyzer flag.
+// temporarily mutates the shared analyzer flags.
 type DisableNolintTestSuite struct{}
+
+func (s *DisableNolintTestSuite) BeforeEach(_ *gotest.T) { lint.ExportSetDisableNolint(true) }
+func (s *DisableNolintTestSuite) AfterEach(_ *gotest.T)  { lint.ExportSetDisableNolint(false) }
 
 func (s *DisableNolintTestSuite) TestNolintDirectivesIgnored(t *gotest.T) {
 	testdata := analysistest.TestData()
-
-	lint.ExportSetDisableNolint(true)
-	defer lint.ExportSetDisableNolint(false)
 
 	t.When("disable-nolint is set", func(w *gotest.T) {
 		w.It("reports all diagnostics regardless of nolint directives", func(it *gotest.T) {

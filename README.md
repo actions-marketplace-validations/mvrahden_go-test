@@ -1,13 +1,13 @@
 # gotest
 
 <p align="center">
-  <img src="https://github.com/mvrahden/go-test/blob/0cffdb5e58d1fb1a2aa568ed33dd6ec0770af652/docs/static/gopher.png" alt="gotest gopher" width="360" />
+  <img src="https://raw.githubusercontent.com/mvrahden/go-test/main/site/static/gopher.png" alt="gotest gopher" width="360" />
 </p>
 
-[![CI](https://github.com/mvrahden/go-test/actions/workflows/test.yml/badge.svg)](https://github.com/mvrahden/go-test/actions/workflows/test.yml)
+[![Tests](https://github.com/mvrahden/go-test/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/mvrahden/go-test/actions/workflows/test.yml?query=branch%3Amain)
+[![Quality](https://github.com/mvrahden/go-test/actions/workflows/quality.yml/badge.svg?branch=main)](https://github.com/mvrahden/go-test/actions/workflows/quality.yml?query=branch%3Amain)
 [![Go Reference](https://pkg.go.dev/badge/github.com/mvrahden/go-test.svg)](https://pkg.go.dev/github.com/mvrahden/go-test)
-[![Go Report Card](https://goreportcard.com/badge/github.com/mvrahden/go-test)](https://goreportcard.com/report/github.com/mvrahden/go-test)
-[![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)](https://go.dev/)
+[![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Specification-driven test suites for Go with isolation and parallelism as first-class citizens.
@@ -17,7 +17,7 @@ Write test suites as Go structs.
 What runs is standard `go test`.
 What you read back is a behavioral specification.
 
-No runtime dependencies. No reflection. Pure code generation.
+No third-party runtime dependencies. No reflection in discovery or registration. Pure code generation.
 
 ## Install
 
@@ -84,13 +84,13 @@ gotest spec ./pkg/user
 ```
 
 ```
-UserService
-  Create
-    ✓ creates a user with valid input
-    when email already exists
-      ✓ returns ErrDuplicate
+UserService (12ms)
+  Create (12ms)
+    ✓ creates a user with valid input (11ms)
+    when email already exists (<1ms)
+      ✓ returns ErrDuplicate (<1ms)
 
-1 suite, 2 behaviors: 2 passed
+1 suites, 2 behaviors: 2 passed
 ```
 
 No generated code leaks into your workflow.
@@ -126,8 +126,8 @@ MySuite struct      gotest_psuite_test.go     func TestMySuite(t *testing.T)
   AfterAll()          process isolation          t.Run("TestFoo", ...)
 ```
 
-The generated code is what a careful developer would write by hand: `t.Run`, `t.Cleanup`, `defer`, `sync.WaitGroup`.
-No reflection, no interface dispatch.
+The generated code is what a careful developer would write by hand: `t.Run`, `t.Cleanup`, `defer`, `t.Parallel`.
+No reflection or interface dispatch in the generated wiring.
 
 ## Specification
 
@@ -159,19 +159,21 @@ gotest spec ./pkg/user -v
 ```
 
 ```
-UserService
-  Create
-    when email is valid
+UserService (133ms)
+  Create (128ms)
+    when email is valid (128ms)
       ✓ creates the user (8ms)
       ✓ sends a welcome email (120ms)
-    when email already exists
+    when email already exists (<1ms)
       ✓ returns ErrDuplicate (<1ms)
-  Delete
+  Delete (5ms)
     ✓ soft-deletes the user (5ms)
-    ~ hard-deletes after 30 days — SKIPPED
+    ~ hard-deletes after 30 days — SKIPPED (<1ms)
 
-2 suites, 5 behaviors: 4 passed, 0 failed, 1 skipped
+2 suites, 5 behaviors: 4 passed, 1 skipped
 ```
+
+Every row shows the wall clock it occupied, never the sum of the rows beneath it — so a row that exceeds its children is time it held itself, and one that falls short of their total is children that overlapped.
 
 Generate a markdown specification document:
 
@@ -179,10 +181,17 @@ Generate a markdown specification document:
 gotest spec ./... --format=md --output=docs/behavior-spec.md
 ```
 
-Append spec view after normal test output:
+Render the spec view instead of the default output (also works in watch mode):
 
 ```bash
 gotest ./... -v --spec
+```
+
+Read the spec without running it. `--static` builds the tree from the source, so nothing carries a verdict or a duration. Where a method's behaviors depend on runtime values — a `When` behind a condition, an `Each` over a table that is not a literal — the node says so and the detail goes to stderr, because a partial spec that presents itself as whole is worse than none:
+
+```bash
+gotest spec ./... --static
+gotest spec ./... --static --format=md --output=docs/behavior-spec.md
 ```
 
 ## Isolation
@@ -284,9 +293,9 @@ func (f *E2ESetupFixture) AfterAll(ctx context.Context) error {
 
 Fixture hooks receive `context.Context` and return `error` — the generated wrapper reports failures with automatic attribution (e.g., `E2ESetupFixture.BeforeAll failed: start postgres: connection refused`).
 
-Setup hooks (`BeforeAll`, `BeforeEach`) receive `t.Context()` — cancelled when the test ends, carries the test deadline.
-Cleanup hooks (`AfterAll`, `AfterEach`) receive `context.Background()` — cleanup must proceed even after the test context is cancelled.
-Requires Go 1.24+.
+`BeforeAll`/`AfterAll` receive `context.Background()` bounded by the fixture's configured timeout.
+`BeforeEach` receives the test's `t.Context()`; `AfterEach` receives `context.Background()` — cleanup must proceed even after the test context is cancelled.
+Requires Go 1.25+.
 
 Test suites reference fixtures via named pointer fields — one or more:
 
@@ -301,7 +310,7 @@ func (s *BatchTestSuite) TestDispatch(t *gotest.T) {
 }
 ```
 
-Fixtures support the same lifecycle hooks as suites.
+Fixtures support the same lifecycle hook names as suites — with `(ctx context.Context) error` signatures instead of `*gotest.T`.
 `BeforeAll`/`AfterAll` run once around all suites bound to the fixture.
 `BeforeEach`/`AfterEach` wrap every individual test case, running outside the suite's own hooks:
 
@@ -313,7 +322,7 @@ Fixture.BeforeEach
 Fixture.AfterEach
 ```
 
-All four hooks are optional (only `BeforeAll` is required).
+`BeforeAll` is required; the other three hooks are optional.
 
 Fixtures compose naturally — each fixture can depend on multiple others via pointer fields.
 Dependencies are set up before dependents, independent fixtures set up in parallel, and everything tears down in reverse.
@@ -599,8 +608,8 @@ func (s *BatchTestSuite) SuiteConfig() gotest.SuiteConfig {
 }
 ```
 
-Only non-zero fields override.
-Use zero duration to explicitly disable a timeout (`Timeout: 0`).
+The returned config is used as-is — a zero (or omitted) duration means no timeout, and without a `SuiteConfig()`/`FixtureConfig()` method the defaults apply.
+Start from a preset to combine defaults with overrides (`cfg := gotest.DefaultSuiteConfig(); cfg.Parallel = true; return cfg`).
 
 Preset constructors for common scenarios:
 
@@ -608,13 +617,13 @@ Preset constructors for common scenarios:
 |--------|---------|--------------|---------|------------|----------|
 | `DefaultFixtureConfig()` | 2 min | — | 0 | — | Standard fixtures |
 | `ContainerFixtureConfig()` | 5 min | — | 1 | 5 sec | Testcontainers, image pulls |
-| `DefaultSuiteConfig()` | 30 sec | 30 sec | 0 | — | Unit/integration tests |
-| `IntegrationSuiteConfig()` | 2 min | 5 min | 0 | — | Heavier integration tests |
+| `DefaultSuiteConfig()` | 30 sec | 30 sec | — | — | Unit/integration tests |
+| `IntegrationSuiteConfig()` | 2 min | 5 min | — | — | Heavier integration tests |
 
 ### Project Configuration
 
 Project-level defaults live in `.gotest.yml` at the repository root (or nearest parent with a `go.mod`).
-CLI flags always take precedence over config values; zero/omitted fields are ignored.
+CLI flags always take precedence over config values; omitted keys fall back to defaults (an explicit `0` on a duration key disables the deadline).
 
 ```yaml
 # .gotest.yml
@@ -639,7 +648,7 @@ lint:
 | `parallel` | int | `--parallel` | Total concurrent test method budget |
 | `compile-parallel` | int | `--compile-parallel` | Concurrent compilation processes (default: NumCPU, auto-halved for -race/-msan/-asan) |
 | `debounce` | duration | `--debounce` | Watch mode re-run delay |
-| `lint.skip` | list | — | Lint rules to disable project-wide |
+| `lint.skip` | list | — | Non-integrity lint rules to disable project-wide |
 
 ## Test Selection
 
@@ -704,7 +713,7 @@ gotest scaffold ./pkg/user.UserService
 
 ```bash
 gotest migrate ./...
-# Migrated 12 suites across 8 packages:
+# Migrated 12 suites:
 #   pkg/user/user_test.go: UserSuite → UserTestSuite
 ```
 
@@ -718,8 +727,14 @@ Catch common mistakes in test suites with static analysis:
 gotest lint ./...
 ```
 
-Detects: lifecycle hook typos, value receivers on suite methods, missing `AfterAll` when `BeforeAll` exists, committed `F_` prefixes, and orphaned generated files.
-Also available as a standalone binary (`gotest-lint`) compatible with `golangci-lint` via `go/analysis`.
+Sixteen rules in three tiers:
+
+- **Integrity** — violations can make test outcomes unreliable or leak resources: committed `F_` prefixes, value receivers on suite methods, lifecycle hook typos, `BeforeAll` without `AfterAll`, `X_` prefixes on lifecycle hooks, wrong test signatures, suite-lifecycle bypasses via `t.T()` (`Cleanup`/`Parallel`/`Run`), outer `t` inside `Eventually`/`Consistently` callbacks, `Nil`/`Empty` assertions on types their runtime guards reject, and generated files checked into version control.
+- **Expressiveness** — the test is correct but its syntax can be improved: simplifiable assertions (`True(t, a == b)` → `Equal`, `Len(t, x, 0)` → `Empty`, …), redundant assertions, `if cond { Fail(...) }` guards that an assertion expresses directly, and unnecessary `t.T()` escapes. `-fix` applies the safe rewrites.
+- **Migration** — adoption aids for codebases moving to gotest: stdlib test functions and testify imports; coexistence is legitimate.
+
+Suppress per line with `//nolint:<rule>` (same line or the comment block directly above); expressiveness and migration rules can also be disabled project-wide via `.gotest.yml` (`lint.skip`). See the [design spec](docs/design/spec.md#linter) for the full rule table.
+There is no golangci-lint plugin — run `gotest lint` as its own CI step alongside your existing linter. Inside GitHub Actions (or with `--github`), findings additionally surface as inline PR annotations and a step-summary table. (The standalone `gotest-lint` binary was retired; `gotest lint` accepts the same targets and driver flags, and `pkg/lint` exports the analyzer for external `go/analysis` drivers.)
 
 ## GitHub Actions
 
@@ -736,7 +751,7 @@ Use the official action for CI pipelines with failure summaries, inline PR annot
 
 By default (`version: gomod`), the action resolves `gotest` from your `go.mod` — no version drift between CI and local development. Set `version: latest` or a specific tag to install a standalone binary instead.
 
-The action emits `::error` annotations that appear inline on PR diffs and writes a markdown summary to the GitHub step summary panel. See the [reference](https://mvrahden.github.io/go-test/reference.html#ci-integration) for the full inputs/outputs table.
+The action emits `::error` annotations that appear inline on PR diffs and writes a markdown summary to the GitHub step summary panel. See the [reference](https://mvrahden.github.io/go-test/reference/#ci-integration) for the full inputs/outputs table.
 
 ## Commands
 
@@ -751,6 +766,8 @@ gotest refactor toggle-focus . # toggle F_/X_ prefixes programmatically
 gotest migrate ./...           # convert testify/suite to go-test
 gotest generate ./...          # run code generation only (no tests)
 gotest clean ./...             # remove orphaned generated files
+gotest discover ./...          # suite metadata as JSON (editor/AI surface)
+gotest prepare ./tests/e2e     # start shared fixtures for debugging
 gotest version                 # print version
 gotest help                    # show help
 ```
@@ -772,7 +789,7 @@ All `go test` flags work unchanged: `-race`, `-cover`, `-count`, `-run`, `-json`
 | `*SharedFixture` suffix | Cross-package shared fixture |
 | `FixtureConfig()` method | Fixture timeout/retry config |
 | `SharedFixtureConfig()` method | Shared fixture timeout/retry config |
-| `SuiteConfig()` method | Suite timeout/parallelism/failfast config |
+| `SuiteConfig()` method | Suite timeout/parallelism/exclusive/failfast config |
 | `Hydrate` / `Dehydrate` | SharedFixture test-process resource reconstruction |
 
 ## VS Code Extension

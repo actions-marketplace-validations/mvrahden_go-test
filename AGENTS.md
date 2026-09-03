@@ -29,15 +29,14 @@ This is the most common source of runtime panics in gotest code.
 
 **Never use `t.T().Skip()` for environment gating.**
 Use `SuiteGuard() string` instead.
-SuiteGuard runs before shared fixture wiring and `t.Parallel()`, avoiding wasted work.
-`t.T().Skip()` inside `BeforeAll` runs after those expensive operations.
+SuiteGuard runs before the suite's config resolution, `BeforeAll`, and every test method — the suite's own setup never executes.
+(Package/shared fixture setup currently still runs before the guard.)
+`t.T().Skip()` inside `BeforeAll` runs even later, after suite setup has started.
 
-**`Nil`/`NotNil` assertions do not exist.**
-This is deliberate.
-Go generics cannot constrain to "nillable types", so a generic `NotNil(t, x)` would silently accept non-nillable types (e.g. `int`, `struct{}`), creating logical bugs with no compile-time warning.
-Use `NotZero`/`Zero` for pointer, interface, and channel nil checks (these types satisfy `comparable`).
-For slices, maps, and channels, prefer `Empty`/`NotEmpty` — a nil slice and an empty slice are equivalent for most test intent.
-Use `True(t, x != nil)` only when the nil vs empty distinction actually matters.
+**`Nil`/`NotNil` are for non-comparable nilables only.**
+They carry a runtime type guard: slices, maps, funcs, channels, pointers, interfaces, and unsafe pointers are accepted; any other type fails with a type-guard error (the `assertion-type-guard` lint rule catches misuse statically).
+Use `Zero`/`NotZero` for comparable nilables (pointers, interfaces, channels).
+For slices and maps, prefer `Empty`/`NotEmpty` — a nil slice and an empty slice are equivalent for most test intent; reach for `Nil`/`NotNil` only when the nil vs empty distinction matters.
 
 **`HasPrefix`/`HasSuffix` assertions do not exist.**
 Use `Regexp(t, "^prefix", str)` or `Regexp(t, "suffix$", str)`.
@@ -89,7 +88,7 @@ gotest.NotZero[V comparable](t, value V)             // value != zero value for 
 `comparable` includes: pointers, interfaces, channels, numerics, strings, bools, structs of comparables, arrays of comparables.
 It excludes: slices, maps, functions.
 
-For nil checks on slices, maps, or functions: `gotest.True(t, x != nil)`.
+For nil checks on slices, maps, or functions: `gotest.NotNil(t, x)` / `gotest.Nil(t, x)` (never `True(t, x != nil)` — the `assertion-simplify` rule rewrites it).
 
 ### Collections
 
@@ -162,7 +161,7 @@ gotest.Panics(t, f func()) any  // asserts f panics, returns recovered value
 gotest.MatchSnapshot(t, value any, name ...string)   // compare value against stored snapshot
 ```
 
-Snapshots are stored in `testdata/__snapshots__/<TestSuiteName>.snap` next to the test file.
+Snapshots are stored in `testdata/__snapshots__/<TestName>.snap` (e.g. `TestMyTestSuite.snap`; suffix `_ext` for external `_test` packages) next to the test file.
 On first run (or with `--update-snapshots`), the snapshot is created.
 On subsequent runs, the value is compared against the stored snapshot.
 The optional `name` disambiguates multiple snapshots within the same test case.
@@ -188,6 +187,40 @@ There are no method forms on `*T`. Only package-level `gotest.Eventually()` and 
 `poll` has no `T()` method. All code in the callback must use gotest assertions only.
 Any helper that calls `t.T()` will panic.
 This is by design — the recorder intercepts failures without aborting, enabling retry semantics.
+
+A panic in the callback fails the test and is reported with the stack from where it
+happened. The callback runs on its own goroutine, so the panic is carried back to the
+test's goroutine before being re-raised — `AfterEach`, `AfterAll` and fixture teardown all
+still run.
+
+## Goroutines Started by Tests
+
+A panic on a goroutine the test starts is unrecoverable: Go terminates the process
+without running any other goroutine's deferred work, so no `AfterEach`, no `AfterAll`
+and no fixture teardown happens. No framework can guard a goroutine it did not create.
+
+Use `gotest.Go` to start one instead. It captures the panic with the stack from where
+it happened and re-raises it on the test's own goroutine, where it is reported like any
+other test panic and every cleanup still runs.
+
+For work that finishes on its own, wait where you want the panic to surface:
+
+```go
+wait := gotest.Go(t, func() { report = build(input) })
+defer wait()
+```
+
+For a goroutine that runs until something stops it — a server, a poller — do **not**
+wait inside the test. `gotest.Go` registers the wait as test cleanup, which runs after
+`AfterEach`, so whatever stops the goroutine has already run by the time anything waits
+for it:
+
+```go
+gotest.Go(t, func() { srv.Serve(l) })   // AfterEach closes the listener
+```
+
+A `defer wait()` here deadlocks instead: the test's own defers run before `AfterEach`,
+so it waits for a goroutine nothing has stopped yet.
 
 ## Suite Conventions
 
@@ -223,9 +256,17 @@ All are optional.
 Execution order: BeforeAll -> (BeforeEach -> Test -> AfterEach)* -> AfterAll.
 For parallel test cases, AfterAll waits for all parallel tests to complete.
 
+**On failure and panic.**
+`AfterAll` runs even when `BeforeAll` failed or panicked, so teardown may see partly
+initialised state — guard it if `BeforeAll` can fail midway. Write `AfterAll` to release
+whatever `BeforeAll` had reached, not to assume it finished.
+The void `AfterEach` likewise runs even when `BeforeEach` panicked. The returning form
+does not: with nothing returned there is no context to release, and the per-test state it
+would clean up was never created.
+
 **Returning BeforeEach (required for `Parallel: true`):**
 
-When `SuiteConfig` enables `Parallel`, `BeforeEach` must return a context struct pointer to give each parallel test its own isolated state. Test methods and `AfterEach` then accept this context as an additional parameter:
+When `SuiteConfig` enables `Parallel` on a suite with per-test state, `BeforeEach` must return a context struct pointer to give each parallel test its own isolated state (field-less suites, or suites whose only fields are fixture pointers, may be parallel without one). Test methods and `AfterEach` then accept this context as an additional parameter:
 
 ```go
 type testCtx struct {
@@ -257,9 +298,41 @@ func (s *MyTestSuite) SuiteConfig() gotest.SuiteConfig {
 }
 ```
 
-Fields: `Timeout` (per-test deadline), `SetupTimeout`, `FailFast` (stop on first failure), `Parallel` (run methods concurrently).
+Fields: `Timeout` (per-test deadline), `SetupTimeout`, `FailFast` (stop on first failure), `Parallel`, `Exclusive` (dispatched strictly alone, after every non-exclusive suite — for suites whose verdicts measure wall-clock behavior or contend for resources).
 Presets: `DefaultSuiteConfig()` (30s/30s), `IntegrationSuiteConfig()` (2m/5m).
-Use `-1` for `Timeout` or `SetupTimeout` to disable the deadline.
+
+The returned config is used as-is. A zero or omitted duration means **no deadline**,
+matching `go test -timeout 0` — it does not inherit the preset. Start from a preset when
+you want the defaults plus an override:
+
+```go
+func (s *MySuite) SuiteConfig() gotest.SuiteConfig {
+    cfg := gotest.DefaultSuiteConfig()
+    cfg.Parallel = true
+    return cfg
+}
+```
+
+A timeout does two things, and only one of them is defaulted.
+
+It always bounds `t.Context()`. And it is a budget the phase is held to, enforced by
+verdict — but only when **you** declare a `SuiteConfig`. `Timeout` cannot interrupt a
+running test, because Go has no way to stop another goroutine, so a method that ignores
+`t.Context()` and outlives the budget is failed instead. That failure is reported the
+moment the deadline passes, while the method is still running, and is written unbuffered
+so it survives a test that never returns at all.
+
+A suite with no `SuiteConfig` method is not held to a budget: being failed against a
+number you did not choose is not a verdict you can act on. Bounding the process remains
+`go test -timeout`'s job either way.
+
+`SetupTimeout` works the same way for `BeforeAll` and `AfterAll`, including for a setup
+that hangs and never returns. A declared fixture `Timeout` likewise: an overrunning
+fixture `BeforeAll` counts as a failed attempt, retried if `Retries` allows.
+
+`Timeout` reaches `t.Context()` inside nested `When`, `It` and `Each` bodies too — a
+nested behavior inherits the enclosing deadline, and its context is canceled when that
+nested subtest ends. For a tighter budget in one place, use `gotest.NewTWithDeadline`.
 
 ### SuiteGuard (optional)
 
@@ -273,7 +346,8 @@ func (s *MyTestSuite) SuiteGuard() string {
 ```
 
 Returns empty string to run, non-empty to skip with that reason.
-Runs before shared fixture wiring, before `t.Parallel()`, before any expensive work.
+Runs before the suite's config, `BeforeAll`, and any test method (fixture setup currently still runs first).
+Works for standalone and fixture-bound suites alike.
 
 ### Focus & Exclude prefixes
 
@@ -340,6 +414,14 @@ func (f *DBFixture) FixtureConfig() gotest.FixtureConfig {
 
 Presets: `DefaultFixtureConfig()` (2m timeout), `ContainerFixtureConfig()` (5m, 1 retry, 5s delay).
 
+**Teardown failures are real failures.** A fixture `AfterAll` that returns an error or
+panics fails the run — for package and shared fixtures alike. A panic in one fixture's
+teardown is contained, so every other fixture still finishes releasing its resources.
+
+`Retries` covers panics as well as returned errors — a `BeforeAll` that panics is
+retried like one that fails. If a shared fixture's process dies before teardown, the
+run fails: its `AfterAll` never ran and whatever it held is orphaned.
+
 ### Shared fixtures
 
 Cross-package fixtures that run in a subprocess. Name must end with `SharedFixture`.
@@ -378,6 +460,7 @@ func (f *PostgresSharedFixture) SharedFixtureConfig() gotest.FixtureConfig {
 
 Suites reference shared fixtures via pointer fields (same as package fixtures).
 Shared fixtures must not live in `internal/` packages.
+Shared fixtures are window-scheduled: each is resident exactly while a scheduled suite needs it — never started when no dispatched suite requires it, and released or started at the bulk→exclusive-tail barrier as the phases' needs differ.
 
 ### Generic test suites (contract testing)
 

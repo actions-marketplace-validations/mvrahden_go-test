@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,16 @@ var testdataFS embed.FS
 type E2ETestSuite struct {
 	binary  string
 	workDir string
+}
+
+// SuiteConfig: Exclusive — every test method here shells the built CLI,
+// which compiles packages (often with -race) per invocation. That load must
+// never run beside the timing-budget harnesses. Keep invocations frugal
+// too: one CLI run per distinct pipeline behavior, assertions merged into
+// it, binaries and module copies built once in BeforeAll, workloads pinned
+// tiny (-benchtime=10x scale).
+func (s *E2ETestSuite) SuiteConfig() gotest.SuiteConfig {
+	return gotest.SuiteConfig{Exclusive: true}
 }
 
 func (s *E2ETestSuite) BeforeAll(t *gotest.T) {
@@ -56,7 +67,9 @@ func (s *E2ETestSuite) TestT(t *gotest.T) {
 	tmp := t.TempDir()
 	excludedPaths := append(append([]string(nil), testutils.DefaultExcludePaths...),
 		"pkg/gotest/assertions_suite_test.go",
+		"pkg/gotest/b_suite_test.go",
 		"pkg/gotest/config_suite_test.go",
+		"pkg/gotest/each_filter_suite_test.go",
 		"pkg/gotest/each_suite_test.go",
 		"pkg/gotest/export_test.go",
 		"pkg/gotest/must_suite_test.go",
@@ -160,6 +173,127 @@ func (s *E2ETestSuite) TestSharedFixtureExitTiming(t *gotest.T) {
 	})
 }
 
+// Discovery and spec rendering reach a behavior's label by different routes:
+// one reads the description from source, the other reconstructs it from the
+// subtest name go test printed. An editor shows both at once — the test tree
+// from discovery, the panel from the spec — so they have to agree. The
+// descriptions below are the ones where a reconstruction cannot: an underscore
+// the developer typed looks exactly like a space go test replaced.
+func (s *E2ETestSuite) TestDiscoveryAndSpecSpellBehaviorsTheSameWay(t *gotest.T) {
+	dir := filepath.Join(s.workDir, "examples", "declared_labels")
+	gotest.NoError(t, os.MkdirAll(dir, 0o755))
+	defer os.RemoveAll(dir)
+	gotest.NoError(t, os.WriteFile(filepath.Join(dir, "ptest_test.go"), []byte(`package declaredlabels
+
+import "github.com/mvrahden/go-test/pkg/gotest"
+
+type KeysTestSuite struct{}
+
+func (s *KeysTestSuite) TestEncode(t *gotest.T) {
+	t.When("the payload uses snake_case", func(w *gotest.T) {
+		w.It("returns snake_case keys", func(it *gotest.T) { gotest.Equal(it, 1, 1) })
+		w.It("leaves CamelCase alone", func(it *gotest.T) { gotest.Equal(it, 1, 1) })
+	})
+}
+`), 0o600))
+
+	run := func(args ...string) []byte {
+		cmd := exec.Command(s.binary, args...) //nolint:gosec // G204: controlled binary with fixed args
+		cmd.Dir = filepath.Join(s.workDir, "examples")
+		out, _ := cmd.CombinedOutput()
+		return out
+	}
+
+	var discovered struct {
+		Packages []struct {
+			Suites []struct {
+				Methods []struct {
+					Behaviors []discoveredBehavior `json:"behaviors"`
+				} `json:"methods"`
+			} `json:"suites"`
+		} `json:"packages"`
+	}
+	raw := run("discover", "./declared_labels")
+	gotest.NoError(t, json.Unmarshal(raw, &discovered), "discover output: %s", string(raw))
+
+	var declared []string
+	var kinds []string
+	for _, p := range discovered.Packages {
+		for _, su := range p.Suites {
+			for _, m := range su.Methods {
+				collectBehaviors(m.Behaviors, &declared, &kinds)
+			}
+		}
+	}
+	gotest.NotEmpty(t, declared, "discover reported no behaviors: %s", string(raw))
+
+	observed := specLabels(string(run("spec", "--no-color", "./declared_labels")))
+	static := specLabels(string(run("spec", "--static", "--no-color", "./declared_labels")))
+
+	t.It("renders a run under the labels discovery declared", func(it *gotest.T) {
+		for _, label := range declared {
+			gotest.True(it, observed[label],
+				"discovery shows %q, which a run never renders; it shows %v", label, sortedKeys(observed))
+		}
+	})
+
+	t.It("renders a static spec under those same labels", func(it *gotest.T) {
+		for _, label := range declared {
+			gotest.True(it, static[label],
+				"discovery shows %q, which --static never renders; it shows %v", label, sortedKeys(static))
+		}
+	})
+
+	t.It("says which call declared each behavior", func(it *gotest.T) {
+		gotest.Contains(it, kinds, "when", "no When behavior reported: %v", kinds)
+		gotest.Contains(it, kinds, "it", "no It behavior reported: %v", kinds)
+	})
+}
+
+type discoveredBehavior struct {
+	Display  string               `json:"display"`
+	Kind     string               `json:"kind"`
+	Children []discoveredBehavior `json:"children"`
+}
+
+func collectBehaviors(bs []discoveredBehavior, labels, kinds *[]string) {
+	for _, b := range bs {
+		*labels = append(*labels, b.Display)
+		*kinds = append(*kinds, b.Kind)
+		collectBehaviors(b.Children, labels, kinds)
+	}
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// specLabels reduces rendered spec output to the set of labels it shows,
+// dropping indentation, status glyphs, durations and the summary line.
+func specLabels(out string) map[string]bool {
+	labels := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimLeft(line, "✓✗~ ")
+		if i := strings.LastIndex(line, " ("); i > 0 {
+			line = line[:i]
+		}
+		line = strings.TrimSuffix(line, " — SKIPPED")
+		line = strings.TrimSuffix(line, " — EXCLUDED")
+		line = strings.TrimSuffix(line, " — INCOMPLETE")
+		if line == "" || strings.Contains(line, "behaviors:") || strings.HasPrefix(line, "===") {
+			continue
+		}
+		labels[line] = true
+	}
+	return labels
+}
+
 func (s *E2ETestSuite) TestOutputFormatGolden(t *gotest.T) {
 	t.When("non-verbose", func(w *gotest.T) {
 		w.It("single passing package", func(it *gotest.T) {
@@ -203,13 +337,22 @@ func (s *E2ETestSuite) TestOutputFormatGolden(t *gotest.T) {
 	})
 
 	t.When("json", func(w *gotest.T) {
-		w.It("single passing package", func(it *gotest.T) {
-			cmd := exec.Command(s.binary, "github.com/mvrahden/go-test/examples/auth", "-json", "-parallel", "1") //nolint:gosec // G204: controlled binary with fixed args
-			cmd.Dir = filepath.Join(s.workDir, "examples")
-			out, err := cmd.CombinedOutput()
+		cmd := exec.Command(s.binary, "github.com/mvrahden/go-test/examples/auth", "-json", "-parallel", "1") //nolint:gosec // G204: controlled binary with fixed args
+		cmd.Dir = filepath.Join(s.workDir, "examples")
+		out, err := cmd.CombinedOutput()
 
+		w.It("single passing package", func(it *gotest.T) {
 			gotest.NoError(it, err, "auth should pass: %s", string(out))
 			gotest.MatchSnapshot(it, normalizeJSONOutput(string(out)))
+		})
+
+		// -json is a contract with editors and CI parsers. Anything gotest
+		// invents for its own rendering has to stay out of it: a stray log line
+		// becomes a phantom diagnostic in somebody's editor, and the snapshot
+		// above would happily record it as expected.
+		w.It("carries nothing but the tests' own output", func(it *gotest.T) {
+			gotest.NotContains(it, string(out), "ƒƒ", "gotest bookkeeping leaked into -json")
+			gotest.NotContains(it, string(out), "GOTEST_", "gotest bookkeeping leaked into -json")
 		})
 	})
 
@@ -245,6 +388,9 @@ func normalizeJSONOutput(raw string) string {
 			continue
 		}
 		ev["Time"] = "<TIMESTAMP>"
+		// Go 1.27's test2json tags output events with OutputType; older
+		// toolchains omit it. Drop it so one golden fits every Go version.
+		delete(ev, "OutputType")
 		if _, ok := ev["Elapsed"]; ok {
 			ev["Elapsed"] = "<TIMESTAMP>"
 		}
@@ -260,20 +406,15 @@ func normalizeJSONOutput(raw string) string {
 func placeFixture(t *testing.T, tmpDir, srcName, dstRel string) {
 	t.Helper()
 	src, err := testdataFS.Open("testdata/" + srcName)
-	if err != nil {
-		t.Fatalf("open fixture %s: %v", srcName, err)
-	}
+	gotest.NoError(t, err, "open fixture %s: %v", srcName, err)
 	defer src.Close()
 	dst := filepath.Join(tmpDir, dstRel)
 	_ = os.MkdirAll(filepath.Dir(dst), 0o755)
 	f, err := os.Create(dst)
-	if err != nil {
-		t.Fatalf("create %s: %v", dst, err)
-	}
+	gotest.NoError(t, err, "create %s: %v", dst, err)
 	defer f.Close()
-	if _, err := io.Copy(f, src); err != nil {
-		t.Fatalf("copy fixture: %v", err)
-	}
+	_, err = io.Copy(f, src)
+	gotest.NoError(t, err, "copy fixture")
 }
 
 func (s *E2ETestSuite) performTest(t *testing.T, basedir, pkgPath, pkgName, goldenName string) {
@@ -290,9 +431,7 @@ func (s *E2ETestSuite) performTest(t *testing.T, basedir, pkgPath, pkgName, gold
 	testutils.CompareTestOutputWithGolden(t, s.workDir, bytes.NewBuffer(out), testdataFS, goldenName)
 
 	_ = fs.WalkDir(os.DirFS(s.workDir), basedir, func(path string, d fs.DirEntry, err error) error {
-		if about.PSuiteRegex.MatchString(path) {
-			t.Fatalf("found test suite after execution")
-		}
+		gotest.False(t, about.PSuiteRegex.MatchString(path), "found test suite after execution")
 		return nil
 	})
 }

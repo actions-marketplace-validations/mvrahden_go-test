@@ -1,11 +1,15 @@
 # Fixtures
 
+> **Normative.** Part of the design spec (see `spec.md`) — update these docs before
+> derived material.
+
 Fixtures replace `TestMain` + package-level singletons with convention-driven setup.
 Any struct whose name ends in `Fixture` is a package fixture; any struct ending in `SharedFixture` is a cross-package shared fixture.
 
 ## Package Fixture (`*Fixture` suffix)
 
-A package fixture runs `BeforeAll` once per package, then injects state into child test suites via named pointer fields.
+A package fixture runs `BeforeAll` once per suite process, then injects state into child test suites via named pointer fields.
+Each suite is dispatched in its own test process, so suites binding the same package fixture each get a fresh instance — package fixtures share code, not runtime state, across suites.
 
 ```go
 // fixture_test.go
@@ -14,6 +18,8 @@ type E2ESetupFixture struct {
     Pool      *pgxpool.Pool
     ServerURL string
     OrgID     uuid.UUID
+
+    container testcontainers.Container // unexported: teardown handle, not injected state
 }
 
 func (f *E2ESetupFixture) BeforeAll(ctx context.Context) error {
@@ -303,6 +309,11 @@ func (f *PostgresSharedFixture) BeforeAll(ctx context.Context) error {
 
 func (f *PostgresSharedFixture) Hydrate(ctx context.Context) error { return f.connect(ctx) }
 
+func (f *PostgresSharedFixture) Dehydrate(ctx context.Context) error {
+    f.Pool.Close()
+    return nil
+}
+
 type SchemaSharedFixture struct {
     Postgres *PostgresSharedFixture   // dependency — Postgres starts first
     Version  string
@@ -319,7 +330,8 @@ func (f *SchemaSharedFixture) BeforeAll(ctx context.Context) error {
 - Dependencies are expressed via `*XSharedFixture` pointer fields on the struct.
 - `BeforeAll` runs in dependency order: parents before children, independent fixtures in parallel.
 - Cyclic dependencies are rejected at resolution time.
-- SharedFixtures cannot depend on PackageFixtures (they run in different processes).
+- SharedFixtures cannot depend on PackageFixtures (they run in different processes) — a package-fixture pointer field on a shared fixture is a generation error.
+- A shared fixture without `BeforeAll`, or with only one of `Hydrate`/`Dehydrate`, is a generation error — including fixtures reached transitively from other packages.
 
 #### Per-suite dispatch
 
@@ -342,6 +354,59 @@ gotest ./tests/e2e ./tests/integration -v
 5. Run `go test` — test harness deserializes fixture state, calls `Hydrate` if present
 6. Send SIGTERM to the setup subprocess (calls `AfterAll` in reverse order)
 
+## Execution Model
+
+### Never speculative
+
+Shared fixtures are never speculative: a shared fixture is resident exactly while a scheduled suite needs it.
+Before anything starts, the runner computes the set of suites the run will dispatch — after `-run` filtering and config-level skips — and starts only the shared fixtures some scheduled suite requires, closed over the dependency DAG.
+A fixture nothing scheduled needs is never started, and can therefore never fail the run.
+When fixtures are skipped this way, the runner emits one debug line to stderr: `gotest: N shared fixture(s) not started (no scheduled suite requires them)`.
+
+### Window scheduling
+
+A run dispatches in two phases: the parallel bulk, then the serial tail of `Exclusive` suites.
+Each phase has an alive set — `Alive(phase)` is the DAG-closure of the union of the shared fixture keys the phase's suites require — and a shared fixture is resident exactly for the phases that need it:
+
+- Fixtures in neither alive set never start.
+- `Alive(bulk)` starts up-front, concurrent with package compilation.
+- At the bulk→tail barrier — every parallel suite drained, no exclusive suite dispatched yet — the runner tears down `Alive(bulk) ∖ Alive(tail)` in reverse dependency order, then starts `Alive(tail) ∖ Alive(bulk)` in dependency order, under the same per-fixture retry and budget policy as the up-front phase.
+- Run-end teardown releases whatever is still resident. Fixtures released at the barrier are skipped there: every fixture's teardown has exactly one owner.
+
+The barrier speaks two verbs to the setup subprocess over its stdin — start and teardown, each naming a set of state keys — acknowledged on stdout after any late state lines.
+`Alive(tail)` is computed from the tail suites that actually became runnable, so a fixture whose only exclusive suite failed to compile is released at the barrier, not started for nothing.
+On cancellation the barrier is skipped entirely and run-end teardown owns everything.
+Window scheduling is always on; there is no configuration.
+
+### Lazy, reference-counted lifecycle
+
+Fixture setup does not run at package init.
+The first fixture-bound test triggers it (`gotestruntime.FixtureOnce`); a pending counter — seeded by `CountMatchingTests`, which honors `-run`/`-skip` filters — decrements as fixture-bound tests finish, and teardown fires when it reaches zero.
+Filtered-out tests therefore never pay fixture setup, and teardown runs after the *last matching* test, not the last declared one.
+
+### Streaming vs batch shared-fixture dispatch
+
+The default `gotest` run streams: each shared fixture's state is emitted as its `BeforeAll` completes, and suites are dispatched as soon as *their* transitive dependencies are ready, with per-suite state files.
+`watch`, `spec`, and `summary` run in batch mode: they wait for all shared fixtures and write one global state file.
+
+### Failure semantics
+
+- A panic inside a fixture *setup* hook is recovered and converted to an error — it fails setup, it does not crash the process.
+  Teardown-side panics (`AfterAll`/`Dehydrate`) are not recovered and crash the test process.
+- Shared-fixture setup failure aborts the run: exit code 2 in batch modes (`watch`/`spec`/`summary`/`prepare`); in the default streaming run the affected suites are reported as failures (exit 1).
+  In-test-process package-fixture setup failure is a `t.Fatalf` (exit 1).
+- Fixture teardown failure flips an otherwise passing run to a failure (`fixture teardown failed`).
+- Barrier-time failures — an early teardown or a tail-phase start — fail the run through the same aggregation as run-end teardown failures; the terminal teardown still runs and owns the remainder.
+
+### Config markers
+
+- Config marker methods are invoked on a zero-value instance (`(&MyFixture{}).FixtureConfig()`) — the config cannot depend on fixture state.
+- The marker must match the fixture kind: `FixtureConfig()` on a shared fixture (or `SharedFixtureConfig()` on a package fixture) is a generation error.
+
+### Generic fixtures
+
+Generic fixture types instantiated with type arguments are supported; the generator mangles type arguments into the fixture identifier so each instantiation is an independent DAG node.
+
 ## Migrating from TestMain
 
 ### Before
@@ -351,7 +416,7 @@ var suite *testhelper.Suite
 
 func TestMain(m *testing.M) {
     // ... 200 lines of setup with os.Exit(1) error handling ...
-    suite = &testhelper.Suite{...}
+    suite = &testhelper.Suite{ /* ... */ }
     code := m.Run()
     os.Exit(code)
 }
@@ -359,7 +424,7 @@ func TestMain(m *testing.M) {
 type BatchTestSuite struct{}
 
 func (s *BatchTestSuite) TestDispatch(t *gotest.T) {
-    suite.POST(t.T(), ...) // package global
+    suite.POST(t.T(), "/v1/batch", nil) // package global
 }
 ```
 
@@ -380,7 +445,8 @@ type BatchTestSuite struct {
 }
 
 func (s *BatchTestSuite) TestDispatch(t *gotest.T) {
-    resp := s.Fixture.POST(t.T(), "/v1/batch", ..., s.Fixture.SKKeyFull)
+    resp := s.Fixture.POST(t.T(), "/v1/batch", payload, s.Fixture.SKKeyFull)
+    _ = resp
 }
 ```
 

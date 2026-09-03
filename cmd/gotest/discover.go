@@ -29,11 +29,16 @@ type discoverWarning struct {
 }
 
 type discoverPackage struct {
-	ImportPath string          `json:"importPath"`
-	Dir        string          `json:"dir"`
-	ModulePath string          `json:"modulePath,omitempty"`
-	TestOnly   bool            `json:"testOnly,omitempty"`
-	Suites     []discoverSuite `json:"suites"`
+	ImportPath string `json:"importPath"`
+	Dir        string `json:"dir"`
+	ModulePath string `json:"modulePath,omitempty"`
+	TestOnly   bool   `json:"testOnly,omitempty"`
+	// Broken marks a package that failed to load; its diagnostics are in the
+	// top-level warnings. Suite discovery needs a successful parse, so a
+	// broken package's suite list is unknowable, not empty — consumers must
+	// render the package as broken rather than as having no suites.
+	Broken bool            `json:"broken,omitempty"`
+	Suites []discoverSuite `json:"suites"`
 }
 
 type discoverSuite struct {
@@ -58,6 +63,27 @@ type discoverMethod struct {
 	File     string `json:"file"`
 	Line     int    `json:"line"`
 	Col      int    `json:"col"`
+	// Behaviors are the When/It blocks the method declares, read from source.
+	// BehaviorsComplete reports whether that list is exhaustive: when false the
+	// method declares behaviors whose names or existence depend on runtime
+	// values, and a consumer must treat the list as a floor rather than a total.
+	Behaviors         []discoverBehavior `json:"behaviors"`
+	BehaviorsComplete bool               `json:"behaviorsComplete"`
+}
+
+// discoverBehavior mirrors one node of the specification a method declares.
+// Name is the subtest segment go test will produce, so it lines up with the
+// runtime tree byte for byte; Display is the text the developer wrote, the same
+// string `gotest spec` renders for this node. Kind names the call it came from,
+// which the names cannot say: a context and an expectation both arrive as
+// subtests, and a consumer that wants to tell them apart has nowhere else to
+// look.
+type discoverBehavior struct {
+	Name     string             `json:"name"`
+	Display  string             `json:"display"`
+	Kind     string             `json:"kind"`
+	Line     int                `json:"line"`
+	Children []discoverBehavior `json:"children,omitempty"`
 }
 
 func runDiscover(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
@@ -70,15 +96,23 @@ func runDiscover(inv Invocation) int { //nolint:gocritic // hugeParam: stable AP
 
 	out := discoverOutput{}
 
-	loadResults, loadWarnings, err := gotestgen.LoadPackagesForDiscovery(patterns, buildFlags)
+	loadResults, broken, err := gotestgen.LoadPackagesForDiscovery(patterns, buildFlags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
 	}
-	for _, w := range loadWarnings {
-		out.Warnings = append(out.Warnings, discoverWarning{
-			ImportPath: w.PkgPath,
-			Message:    w.Message,
+	for i := range broken {
+		for _, msg := range broken[i].Errors {
+			out.Warnings = append(out.Warnings, discoverWarning{
+				ImportPath: broken[i].PkgPath,
+				Message:    msg,
+			})
+		}
+		out.Packages = append(out.Packages, discoverPackage{
+			ImportPath: broken[i].PkgPath,
+			Dir:        broken[i].Dir,
+			Broken:     true,
+			Suites:     []discoverSuite{},
 		})
 	}
 
@@ -134,7 +168,6 @@ func runDiscover(inv Invocation) int { //nolint:gocritic // hugeParam: stable AP
 	}
 
 	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
 	if err := enc.Encode(out); err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
@@ -183,14 +216,17 @@ func buildDiscoverSuite(suite *gotestast.TestSuiteSpec) discoverSuite {
 	var methods []discoverMethod
 	for _, tc := range suite.TestCases() {
 		mPos := fset.Position(tc.Pos())
+		spec := suite.BehaviorsOf(tc)
 		methods = append(methods, discoverMethod{
-			Name:     tc.Identifier(),
-			Parallel: false,
-			Focused:  tc.IsFocused(),
-			Excluded: tc.IsExcluded(),
-			File:     filepath.Base(mPos.Filename),
-			Line:     mPos.Line,
-			Col:      mPos.Column,
+			Name:              tc.Identifier(),
+			Parallel:          false,
+			Focused:           tc.IsFocused(),
+			Excluded:          tc.IsExcluded(),
+			File:              filepath.Base(mPos.Filename),
+			Line:              mPos.Line,
+			Col:               mPos.Column,
+			Behaviors:         discoverBehaviors(spec.Behaviors),
+			BehaviorsComplete: spec.Complete,
 		})
 	}
 	if methods == nil {
@@ -226,4 +262,32 @@ func discoverFixtureNames(suite *gotestast.TestSuiteSpec) []string {
 		return []string{}
 	}
 	return names
+}
+
+// discoverBehaviors converts the walker's tree into the discovery wire shape.
+func discoverBehaviors(in []*gotestast.Behavior) []discoverBehavior {
+	out := make([]discoverBehavior, 0, len(in))
+	for _, b := range in {
+		out = append(out, discoverBehavior{
+			Name:     b.Name,
+			Display:  b.Display,
+			Kind:     behaviorKindString(b.Kind),
+			Line:     b.Line,
+			Children: discoverBehaviors(b.Children),
+		})
+	}
+	return out
+}
+
+func behaviorKindString(k gotestast.BehaviorKind) string {
+	switch k {
+	case gotestast.BehaviorWhen:
+		return "when"
+	case gotestast.BehaviorIt:
+		return "it"
+	case gotestast.BehaviorEach:
+		return "each"
+	default:
+		return ""
+	}
 }

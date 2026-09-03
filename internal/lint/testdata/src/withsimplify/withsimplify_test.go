@@ -99,7 +99,7 @@ func TestTrueNegation(t *testing.T) {
 	gotest.True(t, !b) // want `use False instead of True for negation`
 
 	s := "hello"
-	gotest.True(t, !strings.Contains(s, "z")) // want `use NotContains instead of True for negated strings.Contains call`
+	gotest.True(t, !strings.Contains(s, "z")) // want `use NotContains instead of True for strings.Contains call`
 }
 
 // === False with binary comparisons ===
@@ -183,7 +183,7 @@ func TestFalseNegation(t *testing.T) {
 	gotest.False(t, !b) // want `use True instead of False for negation`
 
 	s := "hello"
-	gotest.False(t, !strings.Contains(s, "h")) // want `use Contains instead of False for negated strings.Contains call`
+	gotest.False(t, !strings.Contains(s, "h")) // want `use Contains instead of False for strings.Contains call`
 }
 
 // === Equal with special values ===
@@ -431,4 +431,67 @@ func TestErrorContainsTypeGuard(t *testing.T) {
 func TestWithMsgArgs(t *testing.T) {
 	a, b := 1, 2
 	gotest.True(t, a == b, "values should match") // want `use Equal instead of True for == comparison`
+}
+
+// === Negation recurses with flipped polarity ===
+
+func TestNegationRecursion(t *testing.T) {
+	var err error
+	gotest.True(t, !(err != nil)) // want `use NoError instead of True for error nil check`
+	items := []int{1}
+	gotest.False(t, !(len(items) == 0)) // want `use Empty instead of False for len == 0 check`
+}
+
+// === len != n in negated context ===
+
+func TestLenNeq(t *testing.T) {
+	items := []int{1, 2}
+	gotest.False(t, len(items) != 2) // want `use Len instead of False for len comparison`
+}
+
+// === Empty-string comparisons ===
+
+func TestEmptyString(t *testing.T) {
+	s := "x"
+	gotest.True(t, s == "")   // want `use Empty instead of True for empty string check`
+	gotest.True(t, s != "")   // want `use NotEmpty instead of True for empty string check`
+	gotest.False(t, s == "")  // want `use NotEmpty instead of False for empty string check`
+	gotest.Equal(t, s, "")    // want `use Empty instead of Equal for empty string comparison`
+	gotest.NotEqual(t, "", s) // want `use NotEmpty instead of NotEqual for empty string comparison`
+}
+
+// === literal operands move to the expected slot ===
+
+func TestLiteralFirstSimplify(t *testing.T) {
+	x := 7
+	gotest.True(t, x == 5) // want `use Equal instead of True for == comparison`
+}
+
+// === named constants also belong in the expected slot ===
+
+func TestConstFirstSimplify(t *testing.T) {
+	const limit = 9
+	x := 7
+	gotest.True(t, x == limit) // want `use Equal instead of True for == comparison`
+}
+
+// === mixed static operand types: any-typed sides bridge via conversion;
+// other mismatches stay untouched ===
+
+type mixedErr struct{ msg string }
+
+func (e *mixedErr) Error() string { return e.msg }
+
+func TestMixedTypeSimplify(t *testing.T) {
+	row := map[string]any{"id": "a"}
+	id := "b"
+	gotest.True(t, row["id"] == id)     // want `use Equal instead of True for == comparison`
+	gotest.False(t, row["id"] == id)    // want `use NotEqual instead of False for == comparison`
+	gotest.True(t, row["id"] == "gone") // want `use Equal instead of True for == comparison`
+	var boom error = &mixedErr{msg: "boom"}
+	target := &mixedErr{msg: "boom"}
+	gotest.True(t, boom == target)
+	xs := []int{1}
+	ys := []string{"a"}
+	gotest.True(t, reflect.DeepEqual(xs, ys))
 }

@@ -19,11 +19,17 @@ func (ts *ƒƒ_GOTEST_{{ $ts.Identifier }}) AfterEach(it *gotest.T) { {{ if $ts.
 {{- /* Shared fixture package-level vars */ -}}
 {{ range $sf := .SharedFixtureNodes }}
 var ƒ_sf_{{ $sf.Identifier }} = &{{ $sf.QualifiedType }}{}
+{{- if $sf.HasConfig }}
+var ƒcfg_sf_{{ $sf.Identifier }} gotest.FixtureConfig
+{{- end }}
 {{ end }}
 
 {{- /* Package fixture package-level vars */ -}}
 {{ range $f := .AllFixtures }}
 var ƒ_{{ $f.Identifier }} *{{ $f.QualifiedType }}
+{{- if $f.HasConfig }}
+var ƒcfg_{{ $f.Identifier }} gotest.FixtureConfig
+{{- end }}
 {{ end }}
 
 var ƒ_fixtureOnce gotestruntime.FixtureOnce
@@ -37,17 +43,35 @@ var ƒ_pending atomic.Int32
 
 func ƒ_setupFixtures(t *testing.T) {
     if err := ƒ_fixtureOnce.Do(func() error {
+{{- /*
+  Each config is derived exactly once, but inside ƒ_fixtureOnce.Do rather than at
+  package-variable initialisation. A config method that panics has to be
+  contained and reported as a setup failure; at package init it would abort the
+  binary before TestMain, attributed to nothing. It also has to observe the
+  environment TestMain set up, not the one that existed before it ran.
+*/}}
+{{- range $sf := .SharedFixtureNodes }}
+{{- if $sf.HasConfig }}
+        ƒcfg_sf_{{ $sf.Identifier }} = ƒ_sf_{{ $sf.Identifier }}.SharedFixtureConfig()
+{{- end }}
+{{- end }}
+{{- range $f := .AllFixtures }}
+{{- if $f.HasConfig }}
+        ƒcfg_{{ $f.Identifier }} = (&{{ $f.QualifiedType }}{}).FixtureConfig()
+{{- end }}
+{{- end }}
         ƒ_pending.Store(int32(gotestruntime.CountMatchingTests(ƒ_fixtureTestNames)))
         var ƒmaxSuiteSetup time.Duration
 {{ range $fs := .FlatSuites }}
         {
-            ƒscfg := gotest.DefaultSuiteConfig()
 {{- if $fs.Suite.HasConfig }}
-            gotest.OverlaySuiteConfig(&ƒscfg, (&{{ $fs.Suite.Identifier }}{
+            ƒscfg := (&{{ $fs.Suite.Identifier }}{
 {{- range $id, $field := $fs.FixtureFields }}
                 {{ $field }}: ƒ_{{ $id }},
 {{- end }}
-            }).SuiteConfig())
+            }).SuiteConfig()
+{{- else }}
+            ƒscfg := gotest.DefaultSuiteConfig()
 {{- end }}
             if ƒscfg.SetupTimeout > ƒmaxSuiteSetup { ƒmaxSuiteSetup = ƒscfg.SetupTimeout }
         }
@@ -59,6 +83,12 @@ func ƒ_setupFixtures(t *testing.T) {
 {{- range $sf := .SharedFixtureNodes }}
                 {
                     Name: "{{ $sf.Identifier }}",
+{{- if $sf.HasConfig }}
+                    Config: ƒcfg_sf_{{ $sf.Identifier }},
+                    Budget: ƒcfg_sf_{{ $sf.Identifier }}.Timeout,
+{{- else }}
+                    Config: gotest.DefaultFixtureConfig(),
+{{- end }}
                     SharedState: &gotestruntime.SharedStateNode{
                         StateKey: "{{ $sf.StateKey }}",
                         Target: ƒ_sf_{{ $sf.Identifier }},
@@ -117,42 +147,44 @@ func Test{{ $fs.Suite.Identifier }}(t *testing.T) {
 {{- end }}
         },
     }
-    ƒcfg := gotest.DefaultSuiteConfig()
-{{- if $fs.Suite.HasConfig }}
-    gotest.OverlaySuiteConfig(&ƒcfg, s.{{ $fs.Suite.Identifier }}.SuiteConfig())
-{{- end }}
-
-{{- if $fs.Suite.IsMethodParallel }}
-    wg := &sync.WaitGroup{}
-{{- end }}
-
-    ƒsetupT := gotest.NewT(t)
-    if ƒcfg.SetupTimeout > 0 {
-        ƒsetupT = gotest.NewTWithDeadline(t, ƒcfg.SetupTimeout)
+{{- if $fs.Suite.HasGuard }}
+    if ƒreason := s.{{ $fs.Suite.Identifier }}.SuiteGuard(); ƒreason != "" {
+        t.Skipf("suite guard: %s", ƒreason)
+        return
     }
-    t.Cleanup(func() {
-{{- if $fs.Suite.IsMethodParallel }}
-        wg.Wait()
 {{- end }}
-        ƒteardownT := gotest.NewT(t)
-        if ƒcfg.SetupTimeout > 0 {
-            ƒteardownT = gotest.NewTWithDeadline(t, ƒcfg.SetupTimeout)
-        }
-        s.AfterAll(ƒteardownT)
+{{- if $fs.Suite.HasConfig }}
+    ƒcfg := s.{{ $fs.Suite.Identifier }}.SuiteConfig()
+    ƒbudget := ƒcfg
+{{- else }}
+    ƒcfg := gotest.DefaultSuiteConfig()
+    ƒbudget := gotest.SuiteConfig{}
+{{- end }}
+{{- if and $fs.Suite.IsMethodParallel $fs.Suite.TestCases }}
+    ƒfailed := &atomic.Bool{}
+{{- end }}
+{{- /*
+  testing runs the suite cleanup only after every subtest started via t.Run has
+  finished, parallel ones included. It must never wait on those subtests itself:
+  on panic the testing package runs ancestor cleanups from the panicking
+  goroutine, so such a wait deadlocks against the panic unwind.
+*/}}
+
+    t.Cleanup(func() {
+        gotestruntime.RunTeardown(t, ƒcfg.SetupTimeout, ƒbudget.SetupTimeout, s.AfterAll)
     })
-    s.BeforeAll(ƒsetupT)
+    gotestruntime.RunSetup(t, ƒcfg.SetupTimeout, ƒbudget.SetupTimeout, s.BeforeAll)
 
 {{ range $tc := $fs.Suite.TestCases }}
     t.Run("{{ $tc.Identifier }}", func(it *testing.T) {
 {{- if $fs.Suite.IsMethodParallel }}
-        wg.Add(1)
         it.Parallel()
-        defer wg.Done()
-{{- end }}
-        ttt := gotest.NewT(it)
-        if ƒcfg.Timeout > 0 {
-            ttt = gotest.NewTWithDeadline(it, ƒcfg.Timeout)
+        if ƒcfg.FailFast && ƒfailed.Load() {
+          it.Skip("FailFast: earlier test failed")
         }
+        defer func() { if it.Failed() { ƒfailed.Store(true) } }()
+{{- end }}
+        ttt := gotestruntime.TestT(it, ƒcfg.Timeout)
 {{- range $fix := $fs.FixtureOrder }}
 {{- if $fix.AfterEach }}
         defer func() {
@@ -172,16 +204,42 @@ func Test{{ $fs.Suite.Identifier }}(t *testing.T) {
 {{- if $fs.Suite.HasReturningBeforeEach }}
         ctx := s.BeforeEach(ttt)
         defer s.AfterEach(ttt, ctx)
-        s.{{ $tc.Identifier }}({{ if $tc.UsesStdlibT }}ttt.T(){{ else }}ttt{{ end }}, ctx)
+        gotestruntime.RunTest(ttt, ƒbudget.Timeout, func() {
+{{- if $tc.IsAsync }}
+          ƒdone := make(chan struct{}, 1)
+          s.{{ $tc.Identifier }}({{ if $tc.UsesStdlibT }}ttt.T(){{ else }}ttt{{ end }}, ctx, func() { select { case ƒdone <- struct{}{}: default: } })
+          select {
+          case <-ƒdone:
+          case <-ttt.Context().Done():
+            it.Fatalf("%s: done() was not called before the test deadline", "{{ $tc.Identifier }}")
+          }
+{{- else }}
+          s.{{ $tc.Identifier }}({{ if $tc.UsesStdlibT }}ttt.T(){{ else }}ttt{{ end }}, ctx)
+{{- end }}
+        })
 {{- else }}
         defer s.AfterEach(ttt)
         s.BeforeEach(ttt)
-        ƒƒ_GOTEST_exec({{ if $tc.UsesStdlibT }}func(t *gotest.T) { s.{{ $tc.Identifier }}(t.T()) }{{ else }}s.{{ $tc.Identifier }}{{ end }}, ttt)
+        gotestruntime.RunTest(ttt, ƒbudget.Timeout, func() {
+{{- if $tc.IsAsync }}
+          ƒdone := make(chan struct{}, 1)
+          s.{{ $tc.Identifier }}({{ if $tc.UsesStdlibT }}ttt.T(){{ else }}ttt{{ end }}, func() { select { case ƒdone <- struct{}{}: default: } })
+          select {
+          case <-ƒdone:
+          case <-ttt.Context().Done():
+            it.Fatalf("%s: done() was not called before the test deadline", "{{ $tc.Identifier }}")
+          }
+{{- else }}
+          ƒƒ_GOTEST_exec({{ if $tc.UsesStdlibT }}func(t *gotest.T) { s.{{ $tc.Identifier }}(t.T()) }{{ else }}s.{{ $tc.Identifier }}{{ end }}, ttt)
+{{- end }}
+        })
 {{- end }}
     })
+{{- if not $fs.Suite.IsMethodParallel }}
     if ƒcfg.FailFast && t.Failed() {
         return
     }
+{{- end }}
 {{ end }}
 }
 {{ end }}
@@ -190,11 +248,8 @@ func Test{{ $fs.Suite.Identifier }}(t *testing.T) {
             {
                 Name: "{{ .Identifier }}",
 {{- if .HasConfig }}
-                Config: func() gotest.FixtureConfig {
-                    cfg := gotest.DefaultFixtureConfig()
-                    gotest.OverlayFixtureConfig(&cfg, (&{{ .QualifiedType }}{}).FixtureConfig())
-                    return cfg
-                }(),
+                Config: ƒcfg_{{ .Identifier }},
+                Budget: ƒcfg_{{ .Identifier }}.Timeout,
 {{- else }}
                 Config: gotest.DefaultFixtureConfig(),
 {{- end }}

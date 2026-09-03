@@ -1,11 +1,13 @@
 package gotestgen
 
 import (
-	"fmt"
+	"go/ast"
 	"maps"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/mvrahden/go-test/internal/about"
 	"github.com/mvrahden/go-test/internal/gotestast"
 	"github.com/mvrahden/go-test/internal/x/slices"
 	"golang.org/x/tools/go/packages"
@@ -19,8 +21,58 @@ type GenerateResult struct {
 	PXTest                         []byte              // generated external test source
 	SuiteNames                     []string            // suite struct identifiers (e.g. "FooTestSuite")
 	SkippedSuiteNames              []string            // identifiers of suites excluded by focus/X_ rules
+	ExclusiveSuiteNames            []string            // identifiers of suites with SuiteConfig{Exclusive: true} — dispatched alone, after the parallel bulk
 	FixtureDepSuites               []string            // test function names that depend on shared fixtures (e.g. "TestFooSuite")
 	SuiteRequiredSharedFixtureKeys map[string][]string // test func name → required state keys
+	StdlibTestCount                int                 // stdlib func TestX(*testing.T) declarations — reported, never run by gotest
+}
+
+// countStdlibTests counts top-level runnable stdlib test functions — Test*,
+// Benchmark*, Fuzz* (single *testing.T/B/F param) and Example* — across the
+// given package variants, excluding TestMain, non-test files, and generated
+// runner files. gotest never runs these; they are counted so the runner can
+// report them honestly.
+func countStdlibTests(pkgs ...*packages.Package) int {
+	n := 0
+	for _, pkg := range pkgs {
+		if pkg == nil {
+			continue
+		}
+		for _, file := range pkg.Syntax {
+			filename := pkg.Fset.Position(file.Pos()).Filename
+			if !strings.HasSuffix(filename, "_test.go") || about.PSuiteRegex.MatchString(filepath.Base(filename)) {
+				continue
+			}
+			for _, decl := range file.Decls {
+				fd, ok := decl.(*ast.FuncDecl)
+				if !ok || fd.Recv != nil || fd.Name.Name == "TestMain" {
+					continue
+				}
+				name := fd.Name.Name
+				if strings.HasPrefix(name, "Example") {
+					n++
+					continue
+				}
+				if !strings.HasPrefix(name, "Test") && !strings.HasPrefix(name, "Benchmark") && !strings.HasPrefix(name, "Fuzz") {
+					continue
+				}
+				if fd.Type.Params == nil || len(fd.Type.Params.List) != 1 || len(fd.Type.Params.List[0].Names) > 1 {
+					continue
+				}
+				star, ok := fd.Type.Params.List[0].Type.(*ast.StarExpr)
+				if !ok {
+					continue
+				}
+				if sel, ok := star.X.(*ast.SelectorExpr); ok {
+					switch sel.Sel.Name {
+					case "T", "B", "F":
+						n++
+					}
+				}
+			}
+		}
+	}
+	return n
 }
 
 const (
@@ -46,10 +98,14 @@ func CollectFromLoaded(loadResults []*LoadResult) (gotestast.TestSuiteSpecSet, e
 	return allSuites, nil
 }
 
-// LoadWarning represents a non-fatal issue found during package loading.
-type LoadWarning struct {
+// BrokenPackage identifies a matched package that failed to load. Suite
+// discovery requires a successful parse and type-check, so a package that
+// fails either cannot be distinguished from one with no suites — it must
+// carry a build-failure verdict of its own, never disappear from the result.
+type BrokenPackage struct {
 	PkgPath string
-	Message string
+	Dir     string
+	Errors  []string
 }
 
 // LoadResult holds the parsed packages for a given import path,
@@ -66,8 +122,11 @@ func (lr *LoadResult) IsTestOnly() bool {
 	return !lr.hasProdFiles
 }
 
-// loadPackages is the shared core for all package-loading variants.
-func loadPackages(mode packages.LoadMode, targetPkgs []string, buildFlags []string, collectWarnings bool) ([]*LoadResult, []LoadWarning, error) {
+// loadPackages is the shared core for all package-loading variants. Matched
+// packages that fail to load are returned as BrokenPackage entries: every
+// package a pattern matches must end in exactly one verdict, and a load
+// failure is a verdict, not an absence.
+func loadPackages(mode packages.LoadMode, targetPkgs []string, buildFlags []string) ([]*LoadResult, []BrokenPackage, error) {
 	cfg := &packages.Config{
 		Mode:  mode,
 		Tests: true,
@@ -80,21 +139,33 @@ func loadPackages(mode packages.LoadMode, targetPkgs []string, buildFlags []stri
 		return nil, nil, err
 	}
 
-	var warnings []LoadWarning
-	seen := make(map[string]bool)
+	brokenByPath := map[string]*BrokenPackage{}
+	brokenMsgSeen := map[string]map[string]bool{}
 	var loadedTestPkgs []*packages.Package
 	for _, p := range totalFoundPkgs {
 		if len(p.Errors) > 0 {
-			if collectWarnings {
-				pkgPath := strings.TrimSuffix(p.PkgPath, "_test")
-				if strings.HasSuffix(pkgPath, ".test") {
-					continue
-				}
-				if !seen[pkgPath] {
-					seen[pkgPath] = true
-					for _, e := range p.Errors {
-						warnings = append(warnings, LoadWarning{PkgPath: pkgPath, Message: fmt.Sprintf("%s", e)})
-					}
+			pkgPath := strings.TrimSuffix(p.PkgPath, "_test")
+			if pkgPath == "" {
+				pkgPath = p.ID
+			}
+			if strings.HasSuffix(pkgPath, ".test") {
+				// Synthesized test-main package: its errors duplicate the
+				// diagnostics of the variants it links.
+				continue
+			}
+			bp := brokenByPath[pkgPath]
+			if bp == nil {
+				bp = &BrokenPackage{PkgPath: pkgPath, Dir: DeterminePkgDir(p)}
+				brokenByPath[pkgPath] = bp
+				brokenMsgSeen[pkgPath] = map[string]bool{}
+			}
+			// Package variants (ptest, pxtest) repeat the same diagnostics;
+			// each distinct message is reported once per package.
+			for _, e := range p.Errors {
+				msg := e.Error()
+				if !brokenMsgSeen[pkgPath][msg] {
+					brokenMsgSeen[pkgPath][msg] = true
+					bp.Errors = append(bp.Errors, msg)
 				}
 			}
 			continue
@@ -103,8 +174,13 @@ func loadPackages(mode packages.LoadMode, targetPkgs []string, buildFlags []stri
 			loadedTestPkgs = append(loadedTestPkgs, p)
 		}
 	}
+	broken := make([]BrokenPackage, 0, len(brokenByPath))
+	for _, bp := range brokenByPath {
+		broken = append(broken, *bp)
+	}
+	sort.Slice(broken, func(i, j int) bool { return broken[i].PkgPath < broken[j].PkgPath })
 	if len(loadedTestPkgs) == 0 {
-		return nil, warnings, nil
+		return nil, broken, nil
 	}
 
 	prodPkgs := make(map[string]bool)
@@ -151,22 +227,29 @@ func loadPackages(mode packages.LoadMode, targetPkgs []string, buildFlags []stri
 			lr.Pxtest = p
 		}
 	}
+	// A package broken in one variant must not run its intact variants: the
+	// test build for that package fails as a whole, so the verdict is the
+	// broken entry, not a partial run.
+	res = slices.Filter(res, func(lr *LoadResult, _ int) bool {
+		return brokenByPath[lr.PkgPath] == nil
+	})
 	sort.SliceStable(res, func(i, j int) bool {
 		return pkgOrder[res[i].PkgPath] < pkgOrder[res[j].PkgPath]
 	})
-	return res, warnings, nil
+	return res, broken, nil
 }
 
 // LoadPackages loads and groups test packages for the given target patterns.
-func LoadPackages(targetPkgs []string, buildFlags []string) ([]*LoadResult, error) {
-	res, _, err := loadPackages(packageEvalMode, targetPkgs, buildFlags, false)
-	return res, err
+// Broken packages are returned separately; the caller decides whether they
+// abort the command or become failed-package verdicts.
+func LoadPackages(targetPkgs []string, buildFlags []string) ([]*LoadResult, []BrokenPackage, error) {
+	return loadPackages(packageEvalMode, targetPkgs, buildFlags)
 }
 
 // LoadPackagesForDiscovery loads packages using a lightweight mode without
 // NeedDeps, avoiding type-checking of the entire transitive dependency graph.
-func LoadPackagesForDiscovery(targetPkgs []string, buildFlags []string) ([]*LoadResult, []LoadWarning, error) {
-	return loadPackages(discoveryEvalMode, targetPkgs, buildFlags, true)
+func LoadPackagesForDiscovery(targetPkgs []string, buildFlags []string) ([]*LoadResult, []BrokenPackage, error) {
+	return loadPackages(discoveryEvalMode, targetPkgs, buildFlags)
 }
 
 func GenerateFromLoaded(loadResults []*LoadResult) (GenerateResults, []SharedFixtureInfo, error) {
@@ -208,11 +291,17 @@ func generateFromLoaded(loadResults []*LoadResult) (GenerateResults, []SharedFix
 
 		seen := map[string]bool{}
 		var suiteNames []string
+		var exclusiveNames []string
+		exclusiveSeen := map[string]bool{}
 		for _, s := range ptestSpec.EffectiveTestSuites {
 			id := s.Identifier()
 			if !seen[id] {
 				seen[id] = true
 				suiteNames = append(suiteNames, id)
+			}
+			if s.IsExclusive() && !exclusiveSeen[id] {
+				exclusiveSeen[id] = true
+				exclusiveNames = append(exclusiveNames, id)
 			}
 		}
 		for _, s := range pxtestSpec.EffectiveTestSuites {
@@ -220,6 +309,10 @@ func generateFromLoaded(loadResults []*LoadResult) (GenerateResults, []SharedFix
 			if !seen[id] {
 				seen[id] = true
 				suiteNames = append(suiteNames, id)
+			}
+			if s.IsExclusive() && !exclusiveSeen[id] {
+				exclusiveSeen[id] = true
+				exclusiveNames = append(exclusiveNames, id)
 			}
 		}
 
@@ -254,8 +347,10 @@ func generateFromLoaded(loadResults []*LoadResult) (GenerateResults, []SharedFix
 			PXTest:                         pxtestBuf,
 			SuiteNames:                     suiteNames,
 			SkippedSuiteNames:              skippedNames,
+			ExclusiveSuiteNames:            exclusiveNames,
 			FixtureDepSuites:               append(ptestFixtureDeps, pxtestFixtureDeps...),
 			SuiteRequiredSharedFixtureKeys: mergedReqKeys,
+			StdlibTestCount:                countStdlibTests(lr.Ptest, lr.Pxtest),
 		}, nil
 	})
 	if err != nil {

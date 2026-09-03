@@ -1,7 +1,7 @@
 # Go - Test Suites
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/mvrahden/go-test/main/docs/static/gopher.png" alt="gotest gopher" width="360" />
+  <img src="https://raw.githubusercontent.com/mvrahden/go-test/main/site/static/gopher.png" alt="gotest gopher" width="360" />
 </p>
 
 Specification-driven test suites for Go.
@@ -30,8 +30,8 @@ The **Spec View** renders your test structure as a behavioral specification — 
 
 ### Prerequisites
 
-- **Go** (1.24+)
-- **VS Code** (1.101+)
+- **Go** (1.25+)
+- **VS Code** (1.123+)
 - **[Delve](https://github.com/go-delve/delve)** (for debugging only)
 
 The extension invokes the gotest CLI automatically — no separate install needed.
@@ -62,6 +62,7 @@ Tests appear in a structured tree: **Package > Suite > Method > Subtest**.
 Run or debug at any level — a single method, an entire suite, or all tests in a package.
 Multi-select is fully supported.
 Test results persist across sessions, so you see pass/fail state immediately after reopening the editor.
+The tree itself is restored from disk on startup, so suites are browsable straight away instead of waiting for the Go toolchain to finish discovery.
 
 ### CodeLens
 
@@ -144,6 +145,7 @@ Projects using `go.work` are also supported.
 | Go Test: Scaffold Target | Generate a test suite for a specific target |
 | Go Test: Copy Coverage Summary | Copy coverage table to clipboard |
 | Go Test: Copy Test Results | Copy test results to clipboard (also available as context menu on test items) |
+| Go Test: Clear Results | Forget stored results, coverage and spec output, so a window reload does not restore them. The Test Explorer's own "Clear all results" only empties VS Code's in-memory view; clearing the icons in the tree is still its job, because no stable API lets an extension retract them. |
 
 ## Settings
 
@@ -163,6 +165,8 @@ These can be set in `.vscode/settings.json` per workspace folder:
 | `gotest.coverOnSave` | `false` | Re-run package coverage when a `.go` file is saved |
 | `gotest.coverTestOnlyPackages` | `false` | Enable cross-package coverage instrumentation for test-only packages |
 | `gotest.debug.prepareTimeout` | `60` | Seconds to wait for debug preparation before timing out |
+| `gotest.discoveryTimeout` | `120` | Seconds to wait for test discovery before giving up (raise it for a very large workspace) |
+| `gotest.forceKillTimeout` | `360` | Seconds to wait after SIGTERM before sending SIGKILL to a cancelled process. SIGTERM is what triggers shared-fixture teardown, and the CLI allows that up to 5m30s, so this must outlast it |
 | `gotest.watch.scope` | `./...` | Default package scope for watch mode |
 
 ### Global settings (window scope)
@@ -218,8 +222,8 @@ The extension resolves the Go toolchain per workspace folder:
 
 ## Requirements
 
-- VS Code 1.101 or later
-- Go 1.24 or later
+- VS Code 1.123 or later
+- Go 1.25 or later
 - A Go project using [gotest](https://github.com/mvrahden/go-test) suites
 - [Delve](https://github.com/go-delve/delve) for debug support
 

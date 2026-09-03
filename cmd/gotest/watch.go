@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/mvrahden/go-test/internal/gotestgen"
 	"github.com/mvrahden/go-test/internal/gotestrunner"
+	"github.com/mvrahden/go-test/internal/gotestspec"
 )
 
 func parseDebounceFlag(args []string) (time.Duration, error) {
@@ -48,6 +50,11 @@ func runWatch(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 		return 2
 	}
 	jsonMode, goTestArgs := stripJSONFlag(goTestArgs)
+	specMode := hasFlag(ownArgs, "--spec")
+	if specMode && jsonMode {
+		fmt.Fprintln(os.Stderr, "FAIL: --spec cannot be combined with -json")
+		return 2
+	}
 	debounceDuration, err := parseDebounceFlag(ownArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
@@ -59,6 +66,9 @@ func runWatch(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 		fmt.Fprintf(os.Stderr, "FAIL: %s\n", err)
 		return 2
 	}
+	// Watch is the interactive focus-iteration tool: never let a CI-ish
+	// environment auto-enable the F_ guard mid-iteration; --ci stays explicit.
+	cfg.CI = hasFlag(ownArgs, "--ci")
 
 	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals...)
 	defer stop()
@@ -66,7 +76,7 @@ func runWatch(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 	if !jsonMode {
 		fmt.Printf("\033[2m  running tests...\033[0m\n")
 	}
-	watchRunOnce(ctx, cfg, jsonMode)
+	watchRunOnce(ctx, cfg, jsonMode, specMode)
 	if !jsonMode {
 		fmt.Printf("\n\033[2m  watching for changes...\033[0m\n")
 	}
@@ -118,7 +128,7 @@ func runWatch(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 			changedCfg := cfg
 			changedCfg.GoTestArgs = pkgArgs
 			changedCfg.PackagePatterns = pkgPatterns
-			watchRunOnce(ctx, changedCfg, jsonMode)
+			watchRunOnce(ctx, changedCfg, jsonMode, specMode)
 			changedDirs = nil
 			if !jsonMode {
 				fmt.Printf("\n\033[2m  watching for changes...\033[0m\n")
@@ -133,10 +143,10 @@ func runWatch(inv Invocation) int { //nolint:gocritic // hugeParam: stable API
 	}
 }
 
-func watchRunOnce(ctx context.Context, cfg ExecConfig, jsonMode bool) int { //nolint:gocritic // hugeParam: stable API
+func watchRunOnce(ctx context.Context, cfg ExecConfig, jsonMode, specMode bool) int { //nolint:gocritic // hugeParam: stable API
 	classified := gotestrunner.ClassifyGoTestArgs(cfg.GoTestArgs)
 	loadFlags := gotestrunner.StripCoverBuildFlags(classified.BuildFlags)
-	loaded, err := gotestgen.LoadPackages(cfg.PackagePatterns, loadFlags)
+	loaded, broken, err := gotestgen.LoadPackages(cfg.PackagePatterns, loadFlags)
 	if err != nil {
 		if jsonMode {
 			fmt.Printf("{\"Action\":\"watch-error\",\"Output\":%q}\n", err.Error())
@@ -159,7 +169,15 @@ func watchRunOnce(ctx context.Context, cfg ExecConfig, jsonMode bool) int { //no
 		}
 	}
 
-	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, cfg.Debug, cfg.NoCache)
+	// Only the spec view renders a tree, and reading the declarations costs a
+	// second walk of every test file — not something to repeat on each save
+	// when nothing will consume it.
+	var decls gotestspec.DeclarationIndex
+	if specMode {
+		decls = buildDeclarationIndex(loaded)
+	}
+
+	overlay, cleanup, err := gotestrunner.GenerateOverlay(loaded, broken, cfg.Debug, cfg.NoCache)
 	if err != nil {
 		if jsonMode {
 			fmt.Printf("{\"Action\":\"watch-error\",\"Output\":%q}\n", err.Error())
@@ -178,6 +196,9 @@ func watchRunOnce(ctx context.Context, cfg ExecConfig, jsonMode bool) int { //no
 	mode := gotestrunner.RunBatchText
 	if cfg.JSON {
 		mode = gotestrunner.RunStreamJSON
+	}
+	if specMode {
+		mode = gotestrunner.RunCaptureJSON
 	}
 
 	runCtx := ctx
@@ -206,6 +227,14 @@ func watchRunOnce(ctx context.Context, cfg ExecConfig, jsonMode bool) int { //no
 		if result.ExitCode == 0 {
 			return 1
 		}
+	}
+	if specMode {
+		events, perr := gotestspec.ParseEvents(bytes.NewReader(result.CapturedJSON))
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "FAIL: parsing test events: %s\n", perr)
+			return 2
+		}
+		gotestspec.RenderTerminal(os.Stdout, gotestspec.BuildTree(events, gotestspec.WithDeclarations(decls)))
 	}
 	return result.ExitCode
 }

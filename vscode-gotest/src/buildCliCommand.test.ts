@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
@@ -59,7 +60,7 @@ import { buildCliCommand } from "./cli.js";
 
 function setGoMod(dir: string, content: string) {
   mockReadFile.mockImplementation(async (filePath: unknown) => {
-    if (filePath === `${dir}/go.mod`) return content;
+    if (filePath === path.join(dir, "go.mod")) return content;
     throw new Error("ENOENT");
   });
 }
@@ -81,7 +82,7 @@ describe("buildCliCommand", () => {
       mockConfigValues.set("cliPath", "/usr/local/bin/gotest");
       mockFileExists.mockResolvedValue(true);
       mockExecFileAsync.mockResolvedValue({
-        stdout: "gotest v1.14.0\n",
+        stdout: "gotest v1.27.0\n",
         stderr: "",
       });
 
@@ -144,13 +145,13 @@ describe("buildCliCommand", () => {
       mockConfigValues.set("cliPath", "./bin/gotest");
       mockFileExists.mockResolvedValue(true);
       mockExecFileAsync.mockResolvedValue({
-        stdout: "gotest v1.14.0\n",
+        stdout: "gotest v1.27.0\n",
         stderr: "",
       });
 
       const cmd = await buildCliCommand(["spec"], "/workspace");
 
-      expect(cmd.bin).toBe("/workspace/bin/gotest");
+      expect(cmd.bin).toBe(path.resolve("/workspace", "bin/gotest"));
     });
   });
 
@@ -192,7 +193,7 @@ describe("buildCliCommand", () => {
           "module github.com/myapp",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.14.0",
+          "\tgithub.com/mvrahden/go-test v1.27.0",
           ")",
         ].join("\n"),
       );
@@ -211,7 +212,7 @@ describe("buildCliCommand", () => {
           "module github.com/myapp",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.14.0",
+          "\tgithub.com/mvrahden/go-test v1.27.0",
           ")",
           `replace github.com/mvrahden/go-test => ../go-test`,
         ].join("\n"),
@@ -225,6 +226,45 @@ describe("buildCliCommand", () => {
       });
     });
 
+    // A replace directive points at local source, and the require version
+    // beside it is conventionally a placeholder. Gating the replace path on
+    // that version silently downloaded a release instead of building the
+    // developer's own working tree.
+    it("honours replace even when the require version is a placeholder", async () => {
+      setGoMod(
+        "/workspace",
+        [
+          "module gotest.fixtures",
+          "go 1.24.0",
+          "require github.com/mvrahden/go-test v0.0.0-00010101000000-000000000000",
+          `replace github.com/mvrahden/go-test => ../../..`,
+        ].join("\n"),
+      );
+
+      const cmd = await buildCliCommand(["discover", "./..."], "/workspace");
+
+      expect(cmd).toEqual({
+        bin: "/usr/local/go/bin/go",
+        args: ["run", GOTEST_MODULE, "discover", "./..."],
+      });
+    });
+
+    it("honours replace even when the require version is below the minimum", async () => {
+      setGoMod(
+        "/workspace",
+        [
+          "module github.com/myapp",
+          "go 1.24.0",
+          "require github.com/mvrahden/go-test v1.0.0",
+          `replace github.com/mvrahden/go-test => ../go-test`,
+        ].join("\n"),
+      );
+
+      const cmd = await buildCliCommand(["spec"], "/workspace");
+
+      expect(cmd.args).toEqual(["run", GOTEST_MODULE, "spec"]);
+    });
+
     it("detects replace for parent module path", async () => {
       setGoMod(
         "/workspace",
@@ -232,7 +272,7 @@ describe("buildCliCommand", () => {
           "module github.com/myapp",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.14.0",
+          "\tgithub.com/mvrahden/go-test v1.27.0",
           ")",
           `replace github.com/mvrahden/go-test => ../go-test`,
         ].join("\n"),
@@ -250,7 +290,7 @@ describe("buildCliCommand", () => {
           "module github.com/myapp",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.14.0",
+          "\tgithub.com/mvrahden/go-test v1.27.0",
           ")",
           "replace (",
           "\tgithub.com/mvrahden/go-test => ../go-test",
@@ -270,7 +310,7 @@ describe("buildCliCommand", () => {
           "module github.com/myapp",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.14.0",
+          "\tgithub.com/mvrahden/go-test v1.27.0",
           ")",
           "replace github.com/mvrahden/go-testing => ../go-testing",
         ].join("\n"),
@@ -278,7 +318,7 @@ describe("buildCliCommand", () => {
 
       const cmd = await buildCliCommand(["spec"], "/workspace");
 
-      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.14.0`);
+      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.27.0`);
     });
   });
 
@@ -290,7 +330,7 @@ describe("buildCliCommand", () => {
           "module github.com/myapp",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.14.0",
+          "\tgithub.com/mvrahden/go-test v1.27.0",
           ")",
         ].join("\n"),
       );
@@ -299,7 +339,7 @@ describe("buildCliCommand", () => {
 
       expect(cmd).toEqual({
         bin: "/usr/local/go/bin/go",
-        args: ["run", `${GOTEST_MODULE}@v1.14.0`, "spec", "./..."],
+        args: ["run", `${GOTEST_MODULE}@v1.27.0`, "spec", "./..."],
       });
     });
 
@@ -309,13 +349,13 @@ describe("buildCliCommand", () => {
         [
           "module github.com/myapp",
           "go 1.24.0",
-          "require github.com/mvrahden/go-test v1.14.0",
+          "require github.com/mvrahden/go-test v1.27.0",
         ].join("\n"),
       );
 
       const cmd = await buildCliCommand(["spec"], "/workspace");
 
-      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.14.0`);
+      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.27.0`);
     });
 
     it("finds version via parent module path walk", async () => {
@@ -325,14 +365,14 @@ describe("buildCliCommand", () => {
           "module github.com/myapp",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.15.0",
+          "\tgithub.com/mvrahden/go-test v1.28.0",
           ")",
         ].join("\n"),
       );
 
       const cmd = await buildCliCommand(["spec"], "/workspace");
 
-      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.15.0`);
+      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.28.0`);
     });
 
     it("does not include -- separator", async () => {
@@ -342,7 +382,7 @@ describe("buildCliCommand", () => {
           "module github.com/myapp",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.14.0",
+          "\tgithub.com/mvrahden/go-test v1.27.0",
           ")",
         ].join("\n"),
       );
@@ -381,11 +421,11 @@ describe("buildCliCommand", () => {
     });
 
     it("respects modulePath containing @ as-is", async () => {
-      mockConfigValues.set("modulePath", `${GOTEST_MODULE}@v1.15.0`);
+      mockConfigValues.set("modulePath", `${GOTEST_MODULE}@v1.28.0`);
 
       const cmd = await buildCliCommand(["spec"], "/workspace");
 
-      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.15.0`);
+      expect(cmd.args[1]).toBe(`${GOTEST_MODULE}@v1.28.0`);
     });
   });
 
@@ -423,7 +463,7 @@ describe("buildCliCommand", () => {
       mockConfigValues.set("cliPath", "/usr/local/bin/gotest");
       mockFileExists.mockResolvedValue(true);
       mockExecFileAsync.mockResolvedValue({
-        stdout: "gotest v1.14.0\n",
+        stdout: "gotest v1.27.0\n",
         stderr: "",
       });
       setGoMod(
@@ -443,7 +483,7 @@ describe("buildCliCommand", () => {
           "module github.com/mvrahden/go-test",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.14.0",
+          "\tgithub.com/mvrahden/go-test v1.27.0",
           ")",
         ].join("\n"),
       );
@@ -460,7 +500,7 @@ describe("buildCliCommand", () => {
           "module github.com/myapp",
           "go 1.24.0",
           "require (",
-          "\tgithub.com/mvrahden/go-test v1.14.0",
+          "\tgithub.com/mvrahden/go-test v1.27.0",
           ")",
           `replace github.com/mvrahden/go-test => ../go-test`,
         ].join("\n"),
@@ -469,7 +509,7 @@ describe("buildCliCommand", () => {
       const cmd = await buildCliCommand(["spec"], "/workspace");
 
       expect(cmd.args[1]).toBe(GOTEST_MODULE);
-      expect(cmd.args).not.toContain(`${GOTEST_MODULE}@v1.14.0`);
+      expect(cmd.args).not.toContain(`${GOTEST_MODULE}@v1.27.0`);
     });
   });
 });

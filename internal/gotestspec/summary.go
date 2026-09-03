@@ -27,18 +27,15 @@ func collectFailures(packages []*Package) []failure {
 func collectFailedLeaves(pkgPath string, n *Node, display []string, out *[]failure) {
 	cur := append(append([]string(nil), display...), n.Display)
 
-	if len(n.Children) == 0 {
-		if n.Status == StatusFail {
-			d := make([]string, len(cur))
-			copy(d, cur)
-			*out = append(*out, failure{
-				Package:  pkgPath,
-				Display:  d,
-				Duration: n.Duration,
-				Output:   n.Output,
-			})
-		}
-		return
+	if n.Status == StatusFail && (len(n.Children) == 0 || hasOwnDiagnostic(n) || failedOnItsOwn(n)) {
+		d := make([]string, len(cur))
+		copy(d, cur)
+		*out = append(*out, failure{
+			Package:  pkgPath,
+			Display:  d,
+			Duration: EffectiveDuration(n),
+			Output:   n.Output,
+		})
 	}
 
 	for _, child := range n.Children {
@@ -65,12 +62,12 @@ func collectPackageDiagnostics(packages []*Package) []packageDiagnostic {
 	return diags
 }
 
+// effectiveDuration prefers a wall clock the caller measured itself, because
+// that one also covers compiling: the event stream only starts once the first
+// test does. Without it, the union of what the packages occupied is the closest
+// the stream can get.
 func totalDuration(packages []*Package) time.Duration {
-	var d time.Duration
-	for _, pkg := range packages {
-		d += pkg.Duration
-	}
-	return d
+	return TotalDuration(packages)
 }
 
 func effectiveDuration(cfg renderConfig, packages []*Package) time.Duration {
@@ -94,7 +91,9 @@ func RenderSummary(w io.Writer, packages []*Package, opts ...RenderOption) {
 	failures := collectFailures(packages)
 	diags := collectPackageDiagnostics(packages)
 
-	if len(failures) == 0 && len(diags) == 0 {
+	// A package-level failure without diagnostics still forbids the all-green
+	// summary: the verdict is the package status, not the presence of output.
+	if len(failures) == 0 && len(diags) == 0 && stats.FailedPackages == 0 {
 		fmt.Fprintf(w, "%s%d tests passed%s (%s)\n",
 			c.green, stats.Total(), c.reset,
 			formatDuration(effectiveDuration(cfg, packages)))
@@ -117,7 +116,11 @@ func RenderSummary(w io.Writer, packages []*Package, opts ...RenderOption) {
 				displayPath,
 				formatDuration(f.Duration))
 
-			for _, line := range filterOutput(f.Output) {
+			lines := filterOutput(f.Output)
+			if len(lines) == 0 {
+				lines = []string{noDiagnosticNote}
+			}
+			for _, line := range lines {
 				fmt.Fprintf(w, "      %s%s%s\n", c.red, line, c.reset)
 			}
 		}
@@ -152,7 +155,7 @@ func RenderMarkdownSummary(w io.Writer, packages []*Package, opts ...RenderOptio
 	failures := collectFailures(packages)
 	diags := collectPackageDiagnostics(packages)
 
-	if len(failures) == 0 && len(diags) == 0 {
+	if len(failures) == 0 && len(diags) == 0 && stats.FailedPackages == 0 {
 		fmt.Fprintf(w, "### All %d tests passed (%s)\n",
 			stats.Total(), formatDuration(effectiveDuration(cfg, packages)))
 		if cfg.coverage != nil {
@@ -174,12 +177,13 @@ func RenderMarkdownSummary(w io.Writer, packages []*Package, opts ...RenderOptio
 			f.Package, displayPath, formatDuration(f.Duration))
 
 		lines := filterOutput(f.Output)
-		if len(lines) > 0 {
-			for _, line := range lines {
-				fmt.Fprintf(w, "    %s\n", line)
-			}
-			fmt.Fprintln(w)
+		if len(lines) == 0 {
+			lines = []string{noDiagnosticNote}
 		}
+		for _, line := range lines {
+			fmt.Fprintf(w, "    %s\n", line)
+		}
+		fmt.Fprintln(w)
 
 		fmt.Fprintln(w, "</details>")
 	}
@@ -212,8 +216,14 @@ func RenderMarkdownSummary(w io.Writer, packages []*Package, opts ...RenderOptio
 	if stats.Tests > 0 {
 		parts = append(parts, fmt.Sprintf("%d stdlib tests", stats.Tests))
 	}
-	fmt.Fprintf(w, "%s: %d passed, %d failed, %d skipped\n",
-		strings.Join(parts, ", "), stats.Passed, stats.Failed, stats.Skipped)
+	if len(parts) == 0 {
+		parts = append(parts, "0 suites")
+	}
+	trailer := fmt.Sprintf("%d passed, %d failed, %d skipped", stats.Passed, stats.Failed, stats.Skipped)
+	if stats.FailedPackages > 0 {
+		trailer += fmt.Sprintf(", %d failed packages", stats.FailedPackages)
+	}
+	fmt.Fprintf(w, "%s: %s\n", strings.Join(parts, ", "), trailer)
 }
 
 func renderMarkdownCoverage(w io.Writer, report *CoverageReport) {

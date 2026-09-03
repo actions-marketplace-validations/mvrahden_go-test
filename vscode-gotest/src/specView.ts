@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { spawn } from "node:child_process";
-import { buildCliCommand } from "./cli.js";
+import { buildCliCommand, stripGoRunExitEcho } from "./cli.js";
+import { specRenderTimeoutSeconds } from "./config.js";
+import { ManagedChild } from "./managedChild.js";
 import { readModulePath } from "./gomod.js";
 import type { DiscoveryCache } from "./discovery.js";
 
@@ -132,11 +133,7 @@ export class SpecViewPanel implements vscode.Disposable {
             vscode.env.clipboard.writeText(text);
           }
         } else if (msg.type === "clearResults") {
-          this.lastSpecData = undefined;
-          this.jsonLayers.clear();
-          if (this.panel) {
-            this.panel.webview.html = this.buildHtml({ type: "empty" });
-          }
+          this.clear();
         } else if (msg.type === "goToLocation" && msg.file && msg.line) {
           const uri = vscode.Uri.file(msg.file);
           const line = Math.max(0, msg.line - 1);
@@ -172,6 +169,17 @@ export class SpecViewPanel implements vscode.Disposable {
       null,
       this.disposables,
     );
+  }
+
+  // clear drops the accumulated run layers and empties the panel. Called both
+  // by the panel's own Clear button and when the Test Explorer's results are
+  // cleared, so the two surfaces cannot disagree about what has been run.
+  clear(): void {
+    this.lastSpecData = undefined;
+    this.jsonLayers.clear();
+    if (this.panel) {
+      this.panel.webview.html = this.buildHtml({ type: "empty" });
+    }
   }
 
   async refresh(jsonOutput: string, tag = "default"): Promise<void> {
@@ -286,7 +294,7 @@ export class SpecViewPanel implements vscode.Disposable {
         ? buildEmptyBody(gopherUri)
         : buildSpecBody(msg.data, this.modulePaths, locationMap);
     const stateJson =
-      msg.type === "specData" ? JSON.stringify(msg.data) : "null";
+      msg.type === "specData" ? encodeStateForScript(msg.data) : "null";
 
     return `<!DOCTYPE html>
 <html>
@@ -310,37 +318,97 @@ ${SCRIPT}
   private async runSpecFromInput(jsonInput: string): Promise<string> {
     const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const cmd = await buildCliCommand(
-      ["spec", "--input=-", "--format=json"],
+      // --render-only: this is a renderer, not a CI gate. Without it the exit
+      // code also reports whether the tests passed, which says nothing about
+      // whether a spec was produced.
+      ["spec", "--input=-", "--format=json", "--render-only"],
       workspaceDir,
       this.outputChannel,
     );
-    return new Promise<string>((resolve, reject) => {
-      const child = spawn(cmd.bin, cmd.args, { cwd: workspaceDir });
-      let stdout = "";
-      let stderr = "";
-
-      child.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
-      });
-      child.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
-      });
-      child.on("close", (code) => {
-        if (code !== 0 && stderr) {
-          reject(new Error(`gotest spec exited with code ${code}: ${stderr}`));
-        } else {
-          resolve(stdout);
-        }
-      });
-      child.on("error", (err: Error) => {
-        reject(err);
-      });
-
-      child.stdin.on("error", () => {});
-      child.stdin.write(jsonInput);
-      child.stdin.end();
+    const budgetSeconds = specRenderTimeoutSeconds(workspaceDir);
+    const mc = new ManagedChild(cmd.bin, cmd.args, {
+      cwd: workspaceDir,
+      kind: "spec",
     });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let spawnError: Error | undefined;
+
+    // Decoded on the stream by ManagedChild: a spec tree is large enough to
+    // arrive in several reads, and a boundary inside a multi-byte character
+    // would corrupt the behavior name it lands in.
+    mc.child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    mc.child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    mc.child.on("error", (err: Error) => {
+      spawnError = err;
+    });
+
+    // Rendering is a read: it has no fixtures to tear down, so it gets a budget
+    // and the prompt escalation. Without them a wedged CLI left this promise
+    // pending forever and nothing could end the child.
+    const budget = setTimeout(() => {
+      timedOut = true;
+      void mc.terminate("prompt");
+    }, budgetSeconds * 1000);
+
+    mc.child.stdin?.on("error", () => {});
+    mc.child.stdin?.write(jsonInput);
+    mc.child.stdin?.end();
+
+    try {
+      const { code } = await mc.exited;
+      if (spawnError) throw spawnError;
+      if (timedOut) {
+        throw new Error(`spec render timed out after ${budgetSeconds}s`);
+      }
+      const outcome = interpretSpecExit(code, stdout, stderr);
+      if (!outcome.ok) throw new Error(outcome.message);
+      return outcome.stdout;
+    } finally {
+      clearTimeout(budget);
+      mc.dispose();
+    }
   }
+}
+
+// encodeStateForScript serialises the spec for embedding inside a <script>
+// block. JSON.stringify leaves "<" alone, so a test whose output contains
+// "</script>" would close the block early and spill the rest of the document
+// into the page as live markup. Escaping the angle brackets as unicode
+// escapes leaves the parsed value identical while making that impossible.
+export function encodeStateForScript(data: unknown): string {
+  return JSON.stringify(data)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
+}
+
+export type SpecExitOutcome =
+  { ok: true; stdout: string } | { ok: false; message: string };
+
+// interpretSpecExit decides whether a finished `gotest spec --input=-` left a
+// usable spec behind. Exit 1 means the piped stream carried failures — a
+// verdict about the tests, not a rendering error — so the spec on stdout still
+// stands. Only an exit that produced no spec is an error worth reporting.
+export function interpretSpecExit(
+  code: number | null,
+  stdout: string,
+  stderr: string,
+): SpecExitOutcome {
+  if (code === 0 || (code === 1 && stdout.trim() !== "")) {
+    return { ok: true, stdout };
+  }
+  const detail = stripGoRunExitEcho(stderr);
+  const suffix = detail ? `: ${detail}` : "";
+  return {
+    ok: false,
+    message: `gotest spec exited with code ${code}${suffix}`,
+  };
 }
 
 // --- Types ---
@@ -355,6 +423,7 @@ interface SpecPackage {
   status: string;
   duration: number;
   nodes: SpecNode[];
+  output?: string[];
 }
 
 interface SpecNode {
@@ -377,6 +446,10 @@ interface SpecStats {
   passed: number;
   failed: number;
   skipped: number;
+  // Packages whose verdict sits on the package itself — a build failure, a
+  // death outside any test. They carry no failing behavior, so they are
+  // counted separately from `failed`.
+  failedPackages?: number;
 }
 
 // --- HTML Builders ---
@@ -409,9 +482,10 @@ function buildSpecBody(
   const groups = groupByModule(data.packages, modulePaths);
   let tree: string;
   if (groups.length === 1 && groups[0].entries.length === 1) {
-    tree = groups[0].entries[0].pkg.nodes
-      .map((n) => buildNodeHtml(n, "", locationMap))
-      .join("");
+    const pkg = groups[0].entries[0].pkg;
+    tree =
+      buildPackageFailureHtml(pkg) +
+      pkg.nodes.map((n) => buildNodeHtml(n, "", locationMap)).join("");
   } else if (groups.length === 1) {
     tree = groups[0].entries
       .map((e) => buildPackageSectionHtml(e.displayPath, e.pkg, locationMap))
@@ -486,8 +560,35 @@ function buildPackageSectionHtml(
     .join("");
   return `<details class="pkg-section" open>
   <summary class="pkg-header">${escapeHtml(displayPath)}</summary>
-  ${nodes}
+  ${buildPackageFailureHtml(pkg)}${nodes}
 </details>`;
+}
+
+// pkgFailedOnItsOwn reports whether a package's FAIL verdict originates on
+// the package itself rather than on any test beneath it — a build failure, a
+// TestMain os.Exit, a crash outside any test.
+function pkgFailedOnItsOwn(pkg: SpecPackage): boolean {
+  return pkg.status === "fail" && !pkg.nodes.some(hasFailure);
+}
+
+// buildPackageFailureHtml renders a package-level FAIL verdict with its
+// diagnostics. Such a package has no failing node to render it, so without
+// this block the spec view would show the package as an empty green section
+// beside a red exit code.
+function buildPackageFailureHtml(pkg: SpecPackage): string {
+  if (!pkgFailedOnItsOwn(pkg)) return "";
+  const lines = (pkg.output ?? [])
+    .map((l) => l.trimEnd())
+    .filter(Boolean)
+    .map(escapeHtml)
+    .join("\n");
+  const errorBlock = lines
+    ? `<details class="error-details" open><summary class="error-summary">Error details</summary><pre class="error-output">${lines}</pre></details>`
+    : "";
+  return `<div class="leaf test fail">
+  <span class="icon fail"><span class="status-text">✗</span></span> <strong>FAIL</strong>
+  ${errorBlock}
+</div>`;
 }
 
 function buildModuleSectionHtml(
@@ -496,7 +597,8 @@ function buildModuleSectionHtml(
 ): string {
   const inner =
     group.entries.length === 1
-      ? group.entries[0].pkg.nodes
+      ? buildPackageFailureHtml(group.entries[0].pkg) +
+        group.entries[0].pkg.nodes
           .map((n) => buildNodeHtml(n, "", locationMap))
           .join("")
       : group.entries
@@ -663,12 +765,14 @@ function buildSummary(stats: SpecStats): string {
   if (stats.behaviors > 0) counts.push(`${stats.behaviors} behaviors`);
   if (stats.tests > 0) counts.push(`${stats.tests} stdlib tests`);
 
+  const failedPackages = stats.failedPackages ?? 0;
   return `<div class="summary">
   <span class="summary-counts">${counts.join(", ")}</span>
   <span class="summary-results">
     ${stats.passed > 0 ? `<span class="pass">${stats.passed} passed</span>` : ""}
     ${stats.failed > 0 ? `<span class="fail">${stats.failed} failed</span>` : ""}
     ${stats.skipped > 0 ? `<span class="skip">${stats.skipped} skipped</span>` : ""}
+    ${failedPackages > 0 ? `<span class="fail">${failedPackages} failed packages</span>` : ""}
   </span>
 </div>`;
 }
@@ -716,8 +820,7 @@ function fmtTime(seconds: number): string {
 }
 
 type ReportRow =
-  | { label: string; time: string; result: string }
-  | { raw: string };
+  { label: string; time: string; result: string } | { raw: string };
 
 export function specDataToReport(
   data: SpecData,
@@ -745,7 +848,10 @@ export function specDataToReport(
           moduleAgg.duration += a.duration;
         }
       }
-      if (moduleAgg.passed + moduleAgg.failed + moduleAgg.skipped === 0) {
+      if (
+        moduleAgg.passed + moduleAgg.failed + moduleAgg.skipped === 0 &&
+        !group.entries.some((e) => pkgFailedOnItsOwn(e.pkg))
+      ) {
         continue;
       }
       rows.push({
@@ -765,7 +871,9 @@ export function specDataToReport(
         pkgAgg.skipped += a.skipped;
         pkgAgg.duration += a.duration;
       }
-      if (pkgAgg.passed + pkgAgg.failed + pkgAgg.skipped === 0) continue;
+      const pkgBroken = pkgFailedOnItsOwn(entry.pkg);
+      if (pkgAgg.passed + pkgAgg.failed + pkgAgg.skipped === 0 && !pkgBroken)
+        continue;
       totalAgg.passed += pkgAgg.passed;
       totalAgg.failed += pkgAgg.failed;
       totalAgg.skipped += pkgAgg.skipped;
@@ -773,7 +881,7 @@ export function specDataToReport(
       rows.push({
         label: "  ".repeat(pkgIndent) + entry.displayPath,
         time: fmtTime(pkgAgg.duration),
-        result: fmtAgg(pkgAgg),
+        result: pkgBroken ? "FAIL (package)" : fmtAgg(pkgAgg),
       });
       for (const node of entry.pkg.nodes) {
         walkReportNode(rows, node, pkgIndent + 1, hidden);
@@ -809,6 +917,8 @@ export function specDataToReport(
   if (totalAgg.passed > 0) results.push(`${totalAgg.passed} passed`);
   if (totalAgg.failed > 0) results.push(`${totalAgg.failed} failed`);
   if (totalAgg.skipped > 0) results.push(`${totalAgg.skipped} skipped`);
+  const failedPackages = data.stats.failedPackages ?? 0;
+  if (failedPackages > 0) results.push(`${failedPackages} failed packages`);
   const totalDur = hidden
     ? totalAgg.duration
     : data.packages.reduce((s, p) => s + p.duration, 0);

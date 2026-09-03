@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
-import { spawn, type ChildProcess } from "node:child_process";
+import { ManagedChild } from "./managedChild.js";
 import type { PrepareOutput } from "./types.js";
 import { buildCliCommand, formatCliCommand, scopedConfig } from "./cli.js";
 import { killProcessTree } from "./runnerUtils.js";
 
 export class DebugLauncher implements vscode.Disposable {
-  private readonly prepareProcesses = new Map<string, ChildProcess>();
+  private readonly prepareProcesses = new Map<string, ManagedChild>();
   private sessionListener: vscode.Disposable | undefined;
 
   constructor(private readonly outputChannel: vscode.LogOutputChannel) {}
@@ -34,7 +34,7 @@ export class DebugLauncher implements vscode.Disposable {
     }
 
     let prepare: PrepareOutput;
-    let child: ChildProcess;
+    let managed: ManagedChild;
     try {
       const cmd = await buildCliCommand(
         ["prepare", pkgDir],
@@ -55,7 +55,7 @@ export class DebugLauncher implements vscode.Disposable {
         token,
       );
       prepare = result.output;
-      child = result.child;
+      managed = result.managed;
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Unknown error running prepare";
@@ -65,7 +65,7 @@ export class DebugLauncher implements vscode.Disposable {
 
     const prepareKey = `gotest-prepare:${pkgDir}`;
     this.killPrepareProcess(prepareKey);
-    this.prepareProcesses.set(prepareKey, child);
+    this.prepareProcesses.set(prepareKey, managed);
 
     const runFilter = buildRunFilter(items);
 
@@ -129,10 +129,14 @@ export class DebugLauncher implements vscode.Disposable {
     cwd: string,
     timeoutSeconds: number,
     token: vscode.CancellationToken,
-  ): Promise<{ output: PrepareOutput; child: ChildProcess }> {
+  ): Promise<{ output: PrepareOutput; managed: ManagedChild }> {
     return new Promise((resolve, reject) => {
-      const child = spawn(bin, args, { cwd, detached: true });
+      // A daemon: `prepare` blocks until SIGTERM holding shared fixtures open,
+      // so it gets the teardown grace when it is eventually ended.
+      const managed = new ManagedChild(bin, args, { cwd, kind: "prepare" });
+      const child = managed.child;
       let stdout = "";
+      let stderr = "";
       let settled = false;
       const settle = (fn: () => void) => {
         if (!settled) {
@@ -145,29 +149,29 @@ export class DebugLauncher implements vscode.Disposable {
 
       const timer = setTimeout(() => {
         settle(() => {
-          killProcessTree(child, "SIGTERM");
+          void managed.terminate("teardown");
           reject(new Error(`timed out after ${timeoutSeconds}s`));
         });
       }, timeoutSeconds * 1000);
 
       const cancelListener = token.onCancellationRequested(() => {
         settle(() => {
-          killProcessTree(child, "SIGTERM");
+          void managed.terminate("teardown");
           reject(new Error("cancelled"));
         });
       });
 
-      child.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
+      child.stdout?.on("data", (chunk: string) => {
+        stdout += chunk;
         if (!settled && stdout.includes("\n")) {
           settle(() => {
             try {
               const output = JSON.parse(
                 stdout.split("\n")[0].trim(),
               ) as PrepareOutput;
-              resolve({ output, child });
+              resolve({ output, managed });
             } catch {
-              killProcessTree(child, "SIGTERM");
+              void managed.terminate("teardown");
               reject(
                 new Error(`Failed to parse prepare output: ${stdout.trim()}`),
               );
@@ -176,10 +180,9 @@ export class DebugLauncher implements vscode.Disposable {
         }
       });
 
-      child.stderr.on("data", (data: Buffer) => {
-        this.outputChannel.debug(
-          `[debug:prepare] ${data.toString().trimEnd()}`,
-        );
+      child.stderr?.on("data", (chunk: string) => {
+        stderr += chunk;
+        this.outputChannel.debug(`[debug:prepare] ${chunk.trimEnd()}`);
       });
 
       child.on("error", (err: Error) => {
@@ -187,18 +190,25 @@ export class DebugLauncher implements vscode.Disposable {
       });
 
       child.on("close", (code) => {
-        settle(() =>
-          reject(new Error(`prepare exited with code ${code} before ready`)),
-        );
+        // prepare fails fast on packages that do not build; its stderr carries
+        // the compiler diagnostics, which are the only actionable part.
+        settle(() => {
+          const detail = stderr.trim();
+          reject(
+            new Error(
+              `prepare exited with code ${code} before ready${detail ? `:\n${detail}` : ""}`,
+            ),
+          );
+        });
       });
     });
   }
 
   private killPrepareProcess(sessionName: string): void {
-    const child = this.prepareProcesses.get(sessionName);
-    if (child) {
+    const managed = this.prepareProcesses.get(sessionName);
+    if (managed) {
       this.prepareProcesses.delete(sessionName);
-      killProcessTree(child, "SIGTERM");
+      void managed.terminate("teardown");
     }
   }
 }

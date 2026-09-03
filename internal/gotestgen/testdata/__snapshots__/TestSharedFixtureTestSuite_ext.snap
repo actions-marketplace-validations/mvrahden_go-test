@@ -3,16 +3,20 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/project/tests/fixtures"
 	sfpkg1 "github.com/example/project/tests/redis"
@@ -23,7 +27,24 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PostgresFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
@@ -32,40 +53,27 @@ func main() {
 	ƒcfg_sf1 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 2)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 2)
+	ƒtorn := make([]bool, 2)
 
 	ƒdone_sf0 := make(chan struct{})
 	ƒdone_sf1 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PostgresFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -82,35 +90,23 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/project/tests/fixtures.PostgresFixture"), string(b))
 		}
-	}()
+	}
 
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf1)
-		ƒattempts := 1 + ƒcfg_sf1.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf1.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf1.Timeout)
-			}
-			ƒerrs[1] = sf1.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[1] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "RedisFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[1])
-				if ƒcfg_sf1.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf1.RetryDelay)
-				}
-			}
+	ƒsetup_sf1 := func() {
+		if ƒstarted[1] {
+			return
 		}
+		ƒstarted[1] = true
+		defer close(ƒdone_sf1)
+		ƒerrs[1] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "RedisFixture",
+			Timeout:    ƒcfg_sf1.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf1.Retries,
+			RetryDelay: ƒcfg_sf1.RetryDelay,
+			BeforeAll:  sf1.BeforeAll,
+		})
 		if ƒerrs[1] != nil {
-			fmt.Fprintf(os.Stderr, "RedisFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf1.Retries, ƒerrs[1])
 			return
 		}
 		{
@@ -127,6 +123,54 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/project/tests/redis.RedisFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PostgresFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	ƒteardown_sf1 := func() bool {
+		if ƒtorn[1] || !ƒstarted[1] {
+			ƒtorn[1] = true
+			return false
+		}
+		ƒtorn[1] = true
+		if ƒerrs[1] == nil || errors.Is(ƒerrs[1], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "RedisFixture",
+				Timeout:  ƒcfg_sf1.Timeout,
+				Budget:   0,
+				AfterAll: sf1.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
+	}()
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf1()
 	}()
 
 	ƒwg.Wait()
@@ -138,84 +182,86 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf1.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[1] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf1.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-					defer cancel()
-				}
-				if err := sf1.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		if ƒcfg_sf1.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf1.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
+			}
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
+			}
+		}
+	}()
 
-	if ƒerrs[1] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf1.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-			if err := sf1.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/fixtures.PostgresFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: "+ƒerrs[0].Error())
+					}
+				}
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/redis.RedisFixture") {
+					ƒsetup_sf1()
+					if ƒerrs[1] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "RedisFixture: "+ƒerrs[1].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/redis.RedisFixture") {
+					if ƒteardown_sf1() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "RedisFixture: teardown failed")
+					}
+				}
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/fixtures.PostgresFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
 			}
-			cancel()
-		} else {
-			if err := sf1.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
-			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
 		}
 	}
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-			}
-		}
+
+	if ƒteardown_sf1() {
+		ƒteardownFailed = true
+	}
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -224,16 +270,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/fixtures"
 )
@@ -243,45 +293,49 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PostgresFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 1)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 1)
+	ƒtorn := make([]bool, 1)
 
 	ƒdone_sf0 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PostgresFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -300,6 +354,31 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/fixtures.PostgresFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PostgresFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
 	}()
 
 	ƒwg.Wait()
@@ -311,52 +390,69 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
 			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
 			}
 		}
+	}()
+
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PostgresFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: "+ƒerrs[0].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PostgresFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
+			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
+		}
+	}
+
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -365,16 +461,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/fixtures"
 )
@@ -384,48 +484,77 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.SetupFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 1)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 1)
+	ƒtorn := make([]bool, 1)
 
 	ƒdone_sf0 := make(chan struct{})
+
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
+		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "SetupFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
+		if ƒerrs[0] != nil {
+			return
+		}
+		fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":{}}\n", ƒquote("github.com/example/fixtures.SetupFixture"))
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "SetupFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
 
 	var ƒwg sync.WaitGroup
 
 	ƒwg.Add(1)
 	go func() {
 		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "SetupFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
-		}
-		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "SetupFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
-			return
-		}
-		fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":{}}\n", ƒquote("github.com/example/fixtures.SetupFixture"))
+		ƒsetup_sf0()
 	}()
 
 	ƒwg.Wait()
@@ -437,52 +566,69 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "SetupFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "SetupFixture.AfterAll failed: %v\n", err)
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
 			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "SetupFixture.AfterAll failed: %v\n", err)
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
 			}
 		}
+	}()
+
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.SetupFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "SetupFixture: "+ƒerrs[0].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.SetupFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "SetupFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
+			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
+		}
+	}
+
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -491,16 +637,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/project/tests/fixtures"
 )
@@ -510,45 +660,49 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PostgresFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 1)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 1)
+	ƒtorn := make([]bool, 1)
 
 	ƒdone_sf0 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PostgresFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -565,6 +719,31 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/project/tests/fixtures.PostgresFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PostgresFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
 	}()
 
 	ƒwg.Wait()
@@ -576,52 +755,69 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
 			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
 			}
 		}
+	}()
+
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/fixtures.PostgresFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: "+ƒerrs[0].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/fixtures.PostgresFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
+			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
+		}
+	}
+
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -630,16 +826,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/shared"
 )
@@ -649,7 +849,24 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PostgresFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
@@ -658,40 +875,27 @@ func main() {
 	ƒcfg_sf1 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 2)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 2)
+	ƒtorn := make([]bool, 2)
 
 	ƒdone_sf0 := make(chan struct{})
 	ƒdone_sf1 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PostgresFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -708,35 +912,23 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/shared.PostgresFixture"), string(b))
 		}
-	}()
+	}
 
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf1)
-		ƒattempts := 1 + ƒcfg_sf1.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf1.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf1.Timeout)
-			}
-			ƒerrs[1] = sf1.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[1] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "RedisFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[1])
-				if ƒcfg_sf1.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf1.RetryDelay)
-				}
-			}
+	ƒsetup_sf1 := func() {
+		if ƒstarted[1] {
+			return
 		}
+		ƒstarted[1] = true
+		defer close(ƒdone_sf1)
+		ƒerrs[1] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "RedisFixture",
+			Timeout:    ƒcfg_sf1.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf1.Retries,
+			RetryDelay: ƒcfg_sf1.RetryDelay,
+			BeforeAll:  sf1.BeforeAll,
+		})
 		if ƒerrs[1] != nil {
-			fmt.Fprintf(os.Stderr, "RedisFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf1.Retries, ƒerrs[1])
 			return
 		}
 		{
@@ -753,6 +945,54 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/shared.RedisFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PostgresFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	ƒteardown_sf1 := func() bool {
+		if ƒtorn[1] || !ƒstarted[1] {
+			ƒtorn[1] = true
+			return false
+		}
+		ƒtorn[1] = true
+		if ƒerrs[1] == nil || errors.Is(ƒerrs[1], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "RedisFixture",
+				Timeout:  ƒcfg_sf1.Timeout,
+				Budget:   0,
+				AfterAll: sf1.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
+	}()
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf1()
 	}()
 
 	ƒwg.Wait()
@@ -764,84 +1004,86 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf1.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[1] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf1.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-					defer cancel()
-				}
-				if err := sf1.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		if ƒcfg_sf1.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf1.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
+			}
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
+			}
+		}
+	}()
 
-	if ƒerrs[1] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf1.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-			if err := sf1.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/shared.PostgresFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: "+ƒerrs[0].Error())
+					}
+				}
+				if ƒhasKey(ƒc.Keys, "github.com/example/shared.RedisFixture") {
+					ƒsetup_sf1()
+					if ƒerrs[1] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "RedisFixture: "+ƒerrs[1].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/shared.RedisFixture") {
+					if ƒteardown_sf1() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "RedisFixture: teardown failed")
+					}
+				}
+				if ƒhasKey(ƒc.Keys, "github.com/example/shared.PostgresFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
 			}
-			cancel()
-		} else {
-			if err := sf1.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
-			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
 		}
 	}
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-			}
-		}
+
+	if ƒteardown_sf1() {
+		ƒteardownFailed = true
+	}
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -850,16 +1092,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/fixtures"
 )
@@ -869,45 +1115,49 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PGFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 1)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 1)
+	ƒtorn := make([]bool, 1)
 
 	ƒdone_sf0 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PGFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -924,6 +1174,31 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/fixtures.PGFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PGFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
 	}()
 
 	ƒwg.Wait()
@@ -935,52 +1210,69 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
 			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
 			}
 		}
+	}()
+
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: "+ƒerrs[0].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
+			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
+		}
+	}
+
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -989,16 +1281,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/fixtures"
 )
@@ -1008,45 +1304,49 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PGFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 1)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 1)
+	ƒtorn := make([]bool, 1)
 
 	ƒdone_sf0 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PGFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -1063,6 +1363,31 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/fixtures.PGFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PGFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
 	}()
 
 	ƒwg.Wait()
@@ -1074,52 +1399,69 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
 			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
 			}
 		}
+	}()
+
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: "+ƒerrs[0].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
+			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
+		}
+	}
+
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -1128,16 +1470,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/fixtures"
 )
@@ -1147,45 +1493,49 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PGFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 1)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 1)
+	ƒtorn := make([]bool, 1)
 
 	ƒdone_sf0 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PGFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -1202,6 +1552,31 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/fixtures.PGFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PGFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
 	}()
 
 	ƒwg.Wait()
@@ -1213,70 +1588,91 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
 			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
 			}
 		}
+	}()
+
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: "+ƒerrs[0].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
+			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
+		}
+	}
+
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
-=== SNAP TestGeneratedCodeStructure/retry_logic/generates_retry_loop_with_delay ===
+=== SNAP TestGeneratedCodeStructure/retry_logic/delegates_setup_to_the_same_policy_the_in-process_DAG_runs ===
 // Code generated by "gotest (github.com/mvrahden/go-test)"; DO NOT EDIT.
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/fixtures"
 )
@@ -1286,45 +1682,49 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PGFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 1)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 1)
+	ƒtorn := make([]bool, 1)
 
 	ƒdone_sf0 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PGFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -1341,6 +1741,31 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/fixtures.PGFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PGFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
 	}()
 
 	ƒwg.Wait()
@@ -1352,52 +1777,69 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
 			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
 			}
 		}
+	}()
+
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: "+ƒerrs[0].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
+			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
+		}
+	}
+
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -1406,16 +1848,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/fixtures"
 	sfpkg1 "github.com/example/redis"
@@ -1426,7 +1872,24 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PGFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
@@ -1435,40 +1898,27 @@ func main() {
 	ƒcfg_sf1 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 2)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 2)
+	ƒtorn := make([]bool, 2)
 
 	ƒdone_sf0 := make(chan struct{})
 	ƒdone_sf1 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PGFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -1485,35 +1935,23 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/fixtures.PGFixture"), string(b))
 		}
-	}()
+	}
 
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf1)
-		ƒattempts := 1 + ƒcfg_sf1.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf1.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf1.Timeout)
-			}
-			ƒerrs[1] = sf1.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[1] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "RedisFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[1])
-				if ƒcfg_sf1.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf1.RetryDelay)
-				}
-			}
+	ƒsetup_sf1 := func() {
+		if ƒstarted[1] {
+			return
 		}
+		ƒstarted[1] = true
+		defer close(ƒdone_sf1)
+		ƒerrs[1] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "RedisFixture",
+			Timeout:    ƒcfg_sf1.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf1.Retries,
+			RetryDelay: ƒcfg_sf1.RetryDelay,
+			BeforeAll:  sf1.BeforeAll,
+		})
 		if ƒerrs[1] != nil {
-			fmt.Fprintf(os.Stderr, "RedisFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf1.Retries, ƒerrs[1])
 			return
 		}
 		{
@@ -1530,6 +1968,54 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/redis.RedisFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PGFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	ƒteardown_sf1 := func() bool {
+		if ƒtorn[1] || !ƒstarted[1] {
+			ƒtorn[1] = true
+			return false
+		}
+		ƒtorn[1] = true
+		if ƒerrs[1] == nil || errors.Is(ƒerrs[1], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "RedisFixture",
+				Timeout:  ƒcfg_sf1.Timeout,
+				Budget:   0,
+				AfterAll: sf1.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
+	}()
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf1()
 	}()
 
 	ƒwg.Wait()
@@ -1541,84 +2027,86 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf1.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[1] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf1.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-					defer cancel()
-				}
-				if err := sf1.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		if ƒcfg_sf1.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf1.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
+			}
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
+			}
+		}
+	}()
 
-	if ƒerrs[1] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf1.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-			if err := sf1.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: "+ƒerrs[0].Error())
+					}
+				}
+				if ƒhasKey(ƒc.Keys, "github.com/example/redis.RedisFixture") {
+					ƒsetup_sf1()
+					if ƒerrs[1] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "RedisFixture: "+ƒerrs[1].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/redis.RedisFixture") {
+					if ƒteardown_sf1() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "RedisFixture: teardown failed")
+					}
+				}
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
 			}
-			cancel()
-		} else {
-			if err := sf1.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "RedisFixture.AfterAll failed: %v\n", err)
-			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
 		}
 	}
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
-			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
-			}
-		}
+
+	if ƒteardown_sf1() {
+		ƒteardownFailed = true
+	}
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -1627,16 +2115,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/fixtures"
 )
@@ -1646,45 +2138,49 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PGFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 1)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 1)
+	ƒtorn := make([]bool, 1)
 
 	ƒdone_sf0 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PGFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -1701,6 +2197,31 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/fixtures.PGFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PGFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
 	}()
 
 	ƒwg.Wait()
@@ -1712,70 +2233,91 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
 			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
 			}
 		}
+	}()
+
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: "+ƒerrs[0].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
+			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
+		}
+	}
+
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
-=== SNAP TestGeneratedCodeStructure/with_config_overlay/generates_config_overlay_and_timeout ===
+=== SNAP TestGeneratedCodeStructure/with_config_marker/uses_the_marker_config_for_the_timeout ===
 // Code generated by "gotest (github.com/mvrahden/go-test)"; DO NOT EDIT.
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/fixtures"
 )
@@ -1785,46 +2327,55 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PGFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
-	gotest.OverlayFixtureConfig(&ƒcfg_sf0, sf0.SharedFixtureConfig())
 
 	ƒerrs := make([]error, 1)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 1)
+	ƒtorn := make([]bool, 1)
 
 	ƒdone_sf0 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒcfg, ƒerr := gotestruntime.DeriveFixtureConfig("PGFixture", sf0.SharedFixtureConfig)
+		if ƒerr != nil {
+			ƒerrs[0] = ƒerr
+			return
+		}
+		ƒcfg_sf0 = ƒcfg
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PGFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     ƒcfg_sf0.Timeout,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PGFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -1841,6 +2392,31 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/fixtures.PGFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PGFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   ƒcfg_sf0.Timeout,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
 	}()
 
 	ƒwg.Wait()
@@ -1852,52 +2428,69 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
 			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PGFixture.AfterAll failed: %v\n", err)
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
 			}
 		}
+	}()
+
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: "+ƒerrs[0].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/fixtures.PGFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PGFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
+			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
+		}
+	}
+
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 
@@ -1906,16 +2499,20 @@ func main() {
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	gotest "github.com/mvrahden/go-test/pkg/gotest"
+	gotestruntime "github.com/mvrahden/go-test/pkg/gotestruntime"
 
 	sfpkg0 "github.com/example/project/tests/fixtures"
 	sfpkg1 "github.com/example/project/tests/gcs"
@@ -1926,7 +2523,24 @@ func ƒquote(s string) string {
 	return string(b)
 }
 
+// ƒcommand is one runner instruction on stdin: start or tear down a set of
+// fixtures by state key, mid-run, at a window boundary.
+type ƒcommand struct {
+	Verb string   `json:"verb"`
+	Keys []string `json:"keys"`
+}
+
+func ƒhasKey(keys []string, key string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 func main() {
+	ƒctx, ƒstop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer ƒstop()
 
 	sf0 := &sfpkg0.PostgresFixture{}
 	ƒcfg_sf0 := gotest.DefaultFixtureConfig()
@@ -1935,40 +2549,27 @@ func main() {
 	ƒcfg_sf1 := gotest.DefaultFixtureConfig()
 
 	ƒerrs := make([]error, 2)
-	ƒctx := context.Background()
+	ƒstarted := make([]bool, 2)
+	ƒtorn := make([]bool, 2)
 
 	ƒdone_sf0 := make(chan struct{})
 	ƒdone_sf1 := make(chan struct{})
 
-	var ƒwg sync.WaitGroup
-
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf0)
-		ƒattempts := 1 + ƒcfg_sf0.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf0.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf0.Timeout)
-			}
-			ƒerrs[0] = sf0.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[0] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[0])
-				if ƒcfg_sf0.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf0.RetryDelay)
-				}
-			}
+	ƒsetup_sf0 := func() {
+		if ƒstarted[0] {
+			return
 		}
+		ƒstarted[0] = true
+		defer close(ƒdone_sf0)
+		ƒerrs[0] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "PostgresFixture",
+			Timeout:    ƒcfg_sf0.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf0.Retries,
+			RetryDelay: ƒcfg_sf0.RetryDelay,
+			BeforeAll:  sf0.BeforeAll,
+		})
 		if ƒerrs[0] != nil {
-			fmt.Fprintf(os.Stderr, "PostgresFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf0.Retries, ƒerrs[0])
 			return
 		}
 		{
@@ -1985,35 +2586,23 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/project/tests/fixtures.PostgresFixture"), string(b))
 		}
-	}()
+	}
 
-	ƒwg.Add(1)
-	go func() {
-		defer ƒwg.Done()
-		defer close(ƒdone_sf1)
-		ƒattempts := 1 + ƒcfg_sf1.Retries
-		for ƒj := range ƒattempts {
-			ctx := ƒctx
-			var cancel context.CancelFunc
-			if ƒcfg_sf1.Timeout > 0 {
-				ctx, cancel = context.WithTimeout(ƒctx, ƒcfg_sf1.Timeout)
-			}
-			ƒerrs[1] = sf1.BeforeAll(ctx)
-			if cancel != nil {
-				cancel()
-			}
-			if ƒerrs[1] == nil {
-				break
-			}
-			if ƒj < ƒattempts-1 {
-				fmt.Fprintf(os.Stderr, "GCSFixture.BeforeAll attempt %d/%d failed: %v\n", ƒj+1, ƒattempts, ƒerrs[1])
-				if ƒcfg_sf1.RetryDelay > 0 {
-					time.Sleep(ƒcfg_sf1.RetryDelay)
-				}
-			}
+	ƒsetup_sf1 := func() {
+		if ƒstarted[1] {
+			return
 		}
+		ƒstarted[1] = true
+		defer close(ƒdone_sf1)
+		ƒerrs[1] = gotestruntime.RunFixtureSetup(ƒctx, gotestruntime.FixtureSetup{
+			Name:       "GCSFixture",
+			Timeout:    ƒcfg_sf1.Timeout,
+			Budget:     0,
+			Retries:    ƒcfg_sf1.Retries,
+			RetryDelay: ƒcfg_sf1.RetryDelay,
+			BeforeAll:  sf1.BeforeAll,
+		})
 		if ƒerrs[1] != nil {
-			fmt.Fprintf(os.Stderr, "GCSFixture.BeforeAll failed after %d attempt(s): %v\n", 1+ƒcfg_sf1.Retries, ƒerrs[1])
 			return
 		}
 		{
@@ -2032,6 +2621,54 @@ func main() {
 			}
 			fmt.Fprintf(os.Stdout, "{\"key\":%s,\"state\":%s}\n", ƒquote("github.com/example/project/tests/gcs.GCSFixture"), string(b))
 		}
+	}
+
+	ƒteardown_sf0 := func() bool {
+		if ƒtorn[0] || !ƒstarted[0] {
+			ƒtorn[0] = true
+			return false
+		}
+		ƒtorn[0] = true
+		if ƒerrs[0] == nil || errors.Is(ƒerrs[0], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "PostgresFixture",
+				Timeout:  ƒcfg_sf0.Timeout,
+				Budget:   0,
+				AfterAll: sf0.AfterAll,
+			})
+		}
+		return false
+	}
+
+	ƒteardown_sf1 := func() bool {
+		if ƒtorn[1] || !ƒstarted[1] {
+			ƒtorn[1] = true
+			return false
+		}
+		ƒtorn[1] = true
+		if ƒerrs[1] == nil || errors.Is(ƒerrs[1], gotestruntime.ErrSetupOverran) {
+			return gotestruntime.RunFixtureTeardown(context.Background(), gotestruntime.FixtureTeardown{
+				Name:     "GCSFixture",
+				Timeout:  ƒcfg_sf1.Timeout,
+				Budget:   0,
+				AfterAll: sf1.AfterAll,
+			})
+		}
+		return false
+	}
+
+	var ƒwg sync.WaitGroup
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf0()
+	}()
+
+	ƒwg.Add(1)
+	go func() {
+		defer ƒwg.Done()
+		ƒsetup_sf1()
 	}()
 
 	ƒwg.Wait()
@@ -2043,84 +2680,86 @@ func main() {
 			break
 		}
 	}
+	var ƒbudget time.Duration
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf0.Timeout)
+
+	ƒbudget += gotestruntime.SupervisorBudget(ƒcfg_sf1.Timeout)
+
+	ƒbudgetStr := ƒquote((ƒbudget + 30*time.Second).String())
 
 	if ƒanyFailed {
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\"}\n")
-
-		if ƒerrs[1] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf1.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-					defer cancel()
-				}
-				if err := sf1.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "GCSFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		if ƒerrs[0] == nil {
-			{
-				ctx := context.Background()
-				if ƒcfg_sf0.Timeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-					defer cancel()
-				}
-				if err := sf0.AfterAll(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-				}
-			}
-		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"error\":\"one or more shared fixtures failed\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	} else {
-		var ƒmaxTimeout time.Duration
-
-		if ƒcfg_sf0.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf0.Timeout
-		}
-
-		if ƒcfg_sf1.Timeout > ƒmaxTimeout {
-			ƒmaxTimeout = ƒcfg_sf1.Timeout
-		}
-
-		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒquote((ƒmaxTimeout + 30*time.Second).String()))
+		fmt.Fprintf(os.Stdout, "{\"key\":\"_done\",\"teardownBudget\":%s}\n", ƒbudgetStr)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
+	ƒteardownFailed := false
+	ƒcmds := make(chan ƒcommand)
+	go func() {
+		ƒsc := bufio.NewScanner(os.Stdin)
+		for ƒsc.Scan() {
+			var ƒc ƒcommand
+			if json.Unmarshal(ƒsc.Bytes(), &ƒc) != nil {
+				continue
+			}
+			select {
+			case ƒcmds <- ƒc:
+			case <-ƒctx.Done():
+				return
+			}
+		}
+	}()
 
-	if ƒerrs[1] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf1.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf1.Timeout)
-			if err := sf1.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "GCSFixture.AfterAll failed: %v\n", err)
+ƒloop:
+	for {
+		select {
+		case <-ƒctx.Done():
+			break ƒloop
+		case ƒc := <-ƒcmds:
+			var ƒcmdErrs []string
+			switch ƒc.Verb {
+			case "start":
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/fixtures.PostgresFixture") {
+					ƒsetup_sf0()
+					if ƒerrs[0] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: "+ƒerrs[0].Error())
+					}
+				}
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/gcs.GCSFixture") {
+					ƒsetup_sf1()
+					if ƒerrs[1] != nil {
+						ƒcmdErrs = append(ƒcmdErrs, "GCSFixture: "+ƒerrs[1].Error())
+					}
+				}
+			case "teardown":
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/gcs.GCSFixture") {
+					if ƒteardown_sf1() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "GCSFixture: teardown failed")
+					}
+				}
+				if ƒhasKey(ƒc.Keys, "github.com/example/project/tests/fixtures.PostgresFixture") {
+					if ƒteardown_sf0() {
+						ƒteardownFailed = true
+						ƒcmdErrs = append(ƒcmdErrs, "PostgresFixture: teardown failed")
+					}
+				}
+			default:
+				ƒcmdErrs = append(ƒcmdErrs, "unknown verb: "+ƒc.Verb)
 			}
-			cancel()
-		} else {
-			if err := sf1.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "GCSFixture.AfterAll failed: %v\n", err)
-			}
+			fmt.Fprintf(os.Stdout, "{\"key\":\"_cmd\",\"error\":%s}\n", ƒquote(strings.Join(ƒcmdErrs, "; ")))
 		}
 	}
-	if ƒerrs[0] == nil {
-		ctx := context.Background()
-		if ƒcfg_sf0.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, ƒcfg_sf0.Timeout)
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-			}
-			cancel()
-		} else {
-			if err := sf0.AfterAll(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "PostgresFixture.AfterAll failed: %v\n", err)
-			}
-		}
+
+	if ƒteardown_sf1() {
+		ƒteardownFailed = true
+	}
+	if ƒteardown_sf0() {
+		ƒteardownFailed = true
+	}
+	if ƒanyFailed || ƒteardownFailed {
+		os.Exit(1)
 	}
 }
 

@@ -46,7 +46,7 @@ func loadAllTestPkgs() (map[string]*packages.Package, string, error) {
 	}
 	defer os.RemoveAll(scratch)
 
-	goMod := []byte("module testpkg\n\ngo 1.24\n\nrequire github.com/mvrahden/go-test v0.0.0\n\nreplace github.com/mvrahden/go-test => " + modRoot + "\n")
+	goMod := []byte("module testpkg\n\ngo 1.25\n\nrequire github.com/mvrahden/go-test v0.0.0\n\nreplace github.com/mvrahden/go-test => " + modRoot + "\n")
 	if err := os.WriteFile(filepath.Join(scratch, "go.mod"), goMod, 0600); err != nil {
 		return nil, "", err
 	}
@@ -131,6 +131,20 @@ func ExportMustTestPkg(t testing.TB, name string) *packages.Package {
 		t.Fatalf("package errors: %v", pkg.Errors)
 	}
 	return pkg
+}
+
+// ExportTestPkgDir returns the on-disk directory of a materialized test package
+// inside the throwaway module built by TestMain. Tests that need to compile and
+// run a generated harness — not merely render it — write into this directory.
+func ExportTestPkgDir(t testing.TB, name string) string {
+	t.Helper()
+	if testPkgErr != nil {
+		t.Fatal(testPkgErr)
+	}
+	if _, ok := testPkgIndex[name]; !ok {
+		t.Fatalf("no test package found for %s", name)
+	}
+	return filepath.Join(testPkgDir, name)
 }
 
 // Type aliases for unexported types used in tests across all gotestgen test files.

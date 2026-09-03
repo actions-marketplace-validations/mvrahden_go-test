@@ -17,20 +17,26 @@ import (
 )
 
 type OverlayResult struct {
-	CacheDir                       string
-	WorkDir                        string
-	OverlayFlag                    string
-	SharedFixtures                 []gotestgen.SharedFixtureInfo
-	SuitePackages                  []string
+	CacheDir       string
+	WorkDir        string
+	OverlayFlag    string
+	SharedFixtures []gotestgen.SharedFixtureInfo
+	SuitePackages  []string
+	// BrokenPackages are pattern-matched packages that failed to load. The
+	// pipeline books each one as a failed package so the run cannot report
+	// success while some of its packages never became runnable.
+	BrokenPackages                 []gotestgen.BrokenPackage
 	NoSuitePackages                []string
+	StdlibTestsByPkg               map[string]int // stdlib func TestX counts per package — gotest reports but does not run them
 	SuitesByPkg                    map[string][]string
+	ExclusiveSuitesByPkg           map[string]map[string]bool
 	DirsByPkg                      map[string]string
 	SkippedSuitesByPkg             map[string][]string
 	FixtureDepSuites               map[string]map[string]bool
 	SuiteRequiredSharedFixtureKeys map[string]map[string][]string
 }
 
-func GenerateOverlay(loaded []*gotestgen.LoadResult, debug bool, noCache bool) (*OverlayResult, func(), error) {
+func GenerateOverlay(loaded []*gotestgen.LoadResult, broken []gotestgen.BrokenPackage, debug bool, noCache bool) (*OverlayResult, func(), error) {
 	allResults, allSharedFixtures, err := gotestgen.GenerateFromLoaded(loaded)
 	if err != nil {
 		return nil, nil, err
@@ -64,9 +70,11 @@ func GenerateOverlay(loaded []*gotestgen.LoadResult, debug bool, noCache bool) (
 
 	var suitePkgs []string
 	var noSuitePkgs []string
+	stdlibByPkg := map[string]int{}
 	suitesByPkg := map[string][]string{}
 	dirsByPkg := map[string]string{}
 	skippedSuitesByPkg := map[string][]string{}
+	exclusiveSuitesByPkg := map[string]map[string]bool{}
 	fixtureDepSuites := map[string]map[string]bool{}
 	suiteReqKeys := map[string]map[string][]string{}
 	for _, r := range allResults {
@@ -74,6 +82,9 @@ func GenerateOverlay(loaded []*gotestgen.LoadResult, debug bool, noCache bool) (
 			suitePkgs = append(suitePkgs, r.PkgPath)
 		} else {
 			noSuitePkgs = append(noSuitePkgs, r.PkgPath)
+		}
+		if r.StdlibTestCount > 0 {
+			stdlibByPkg[r.PkgPath] = r.StdlibTestCount
 		}
 		if len(r.SuiteNames) > 0 {
 			suitesByPkg[r.PkgPath] = r.SuiteNames
@@ -83,6 +94,13 @@ func GenerateOverlay(loaded []*gotestgen.LoadResult, debug bool, noCache bool) (
 		}
 		if len(r.SkippedSuiteNames) > 0 {
 			skippedSuitesByPkg[r.PkgPath] = r.SkippedSuiteNames
+		}
+		if len(r.ExclusiveSuiteNames) > 0 {
+			ex := make(map[string]bool, len(r.ExclusiveSuiteNames))
+			for _, name := range r.ExclusiveSuiteNames {
+				ex[name] = true
+			}
+			exclusiveSuitesByPkg[r.PkgPath] = ex
 		}
 		if len(r.FixtureDepSuites) > 0 {
 			s := make(map[string]bool, len(r.FixtureDepSuites))
@@ -102,8 +120,11 @@ func GenerateOverlay(loaded []*gotestgen.LoadResult, debug bool, noCache bool) (
 		OverlayFlag:                    "-overlay=" + filepath.Join(cacheDir, "overlay.json"),
 		SharedFixtures:                 allSharedFixtures,
 		SuitePackages:                  suitePkgs,
+		BrokenPackages:                 broken,
 		NoSuitePackages:                noSuitePkgs,
+		StdlibTestsByPkg:               stdlibByPkg,
 		SuitesByPkg:                    suitesByPkg,
+		ExclusiveSuitesByPkg:           exclusiveSuitesByPkg,
 		DirsByPkg:                      dirsByPkg,
 		SkippedSuitesByPkg:             skippedSuitesByPkg,
 		FixtureDepSuites:               fixtureDepSuites,

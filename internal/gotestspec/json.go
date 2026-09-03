@@ -19,17 +19,20 @@ type jsonPackage struct {
 }
 
 type jsonNode struct {
-	Name     string     `json:"name"`
-	Display  string     `json:"display"`
-	Kind     string     `json:"kind"`
-	Status   string     `json:"status"`
-	Duration float64    `json:"duration"`
-	Focused  bool       `json:"focused"`
-	Excluded bool       `json:"excluded"`
-	External bool       `json:"external"`
-	Variant  int        `json:"variant,omitempty"`
-	Output   []string   `json:"output"`
-	Children []jsonNode `json:"children"`
+	Name     string  `json:"name"`
+	Display  string  `json:"display"`
+	Kind     string  `json:"kind"`
+	Status   string  `json:"status"`
+	Duration float64 `json:"duration"`
+	Focused  bool    `json:"focused"`
+	Excluded bool    `json:"excluded"`
+	External bool    `json:"external"`
+	// Incomplete says the children are a floor, not the whole list. Only a
+	// statically read tree can set it, so it is absent from a rendered run.
+	Incomplete bool       `json:"incomplete,omitempty"`
+	Variant    int        `json:"variant,omitempty"`
+	Output     []string   `json:"output"`
+	Children   []jsonNode `json:"children"`
 }
 
 type jsonStats struct {
@@ -39,6 +42,9 @@ type jsonStats struct {
 	Passed    int `json:"passed"`
 	Failed    int `json:"failed"`
 	Skipped   int `json:"skipped"`
+	// FailedPackages carries package-level verdicts (build failures, deaths
+	// outside any test); the packages array shows which via status "fail".
+	FailedPackages int `json:"failedPackages,omitempty"`
 }
 
 func RenderJSON(w io.Writer, packages []*Package) {
@@ -46,14 +52,7 @@ func RenderJSON(w io.Writer, packages []*Package) {
 
 	root := jsonRoot{
 		Packages: make([]jsonPackage, len(packages)),
-		Stats: jsonStats{
-			Suites:    stats.Suites,
-			Behaviors: stats.Behaviors,
-			Tests:     stats.Tests,
-			Passed:    stats.Passed,
-			Failed:    stats.Failed,
-			Skipped:   stats.Skipped,
-		},
+		Stats:    jsonStats(stats),
 	}
 
 	for i, pkg := range packages {
@@ -64,14 +63,13 @@ func RenderJSON(w io.Writer, packages []*Package) {
 		root.Packages[i] = jsonPackage{
 			Path:     pkg.Path,
 			Status:   statusString(pkg.Status),
-			Duration: pkg.Duration.Seconds(),
+			Duration: PackageDuration(pkg).Seconds(),
 			Nodes:    convertNodes(pkg.Nodes),
 			Output:   output,
 		}
 	}
 
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
 	_ = enc.Encode(root)
 }
 
@@ -82,17 +80,18 @@ func convertNodes(nodes []*Node) []jsonNode {
 	result := make([]jsonNode, len(nodes))
 	for i, n := range nodes {
 		result[i] = jsonNode{
-			Name:     n.Name,
-			Display:  n.Display,
-			Kind:     kindString(n.Kind),
-			Status:   statusString(n.Status),
-			Duration: n.Duration.Seconds(),
-			Focused:  n.Focused,
-			Excluded: n.Excluded,
-			External: n.External,
-			Variant:  n.Variant,
-			Output:   n.Output,
-			Children: convertNodes(n.Children),
+			Name:       n.Name,
+			Display:    n.Display,
+			Kind:       kindString(n.Kind),
+			Status:     statusString(n.Status),
+			Duration:   EffectiveDuration(n).Seconds(),
+			Focused:    n.Focused,
+			Excluded:   n.Excluded,
+			External:   n.External,
+			Incomplete: n.Incomplete,
+			Variant:    n.Variant,
+			Output:     n.Output,
+			Children:   convertNodes(n.Children),
 		}
 		if result[i].Output == nil {
 			result[i].Output = []string{}

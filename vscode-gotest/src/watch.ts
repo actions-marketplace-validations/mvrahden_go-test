@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import type { GoTestController } from "./testController.js";
 import type { DiscoveryCache } from "./discovery.js";
 import { parseTestEvents, type TestEvent } from "./outputParser.js";
@@ -16,6 +16,7 @@ import {
   resolveAncestorItems,
   skipUnresolved,
 } from "./runnerUtils.js";
+import { ManagedChild } from "./managedChild.js";
 import type { RunRegistry } from "./runRegistry.js";
 
 /**
@@ -29,6 +30,7 @@ class WatchProcess implements vscode.Disposable {
   private static readonly MAX_RESTART_DELAY_MS = 30_000;
 
   private child: ChildProcess | undefined;
+  private managed: ManagedChild | undefined;
   private buffer = "";
   private cycleBuffer = "";
   private disposed = false;
@@ -57,20 +59,23 @@ class WatchProcess implements vscode.Disposable {
       `[watch] spawning: ${formatCliCommand(this.cmd)} (cwd: ${this.cwd})`,
     );
 
-    this.child = spawn(this.cmd.bin, this.cmd.args, {
+    // Decoded by ManagedChild: the watcher runs for hours and its events arrive
+    // in whatever pieces the pipe delivers, boundaries falling mid-character.
+    this.managed = new ManagedChild(this.cmd.bin, this.cmd.args, {
       cwd: this.cwd,
-      detached: true,
+      kind: "watch",
     });
+    this.child = this.managed.child;
     this.buffer = "";
     this.cycleBuffer = "";
 
-    this.child.stdout?.on("data", (data: Buffer) => {
-      this.buffer += data.toString();
+    this.child.stdout?.on("data", (chunk: string) => {
+      this.buffer += chunk;
       this.processBuffer();
     });
 
-    this.child.stderr?.on("data", (data: Buffer) => {
-      this.outputChannel.warn(`[watch] stderr: ${data.toString().trimEnd()}`);
+    this.child.stderr?.on("data", (chunk: string) => {
+      this.outputChannel.warn(`[watch] stderr: ${chunk.trimEnd()}`);
     });
 
     this.child.on("close", () => {
@@ -188,30 +193,34 @@ class WatchProcess implements vscode.Disposable {
     }, delay);
   }
 
-  dispose(): void {
+  // forceKill=false is for shutdown. VS Code's deactivate window is seconds,
+  // so any SIGKILL timer long enough to respect a fixture teardown would never
+  // fire, and any timer short enough to fire would cut that teardown off. The
+  // child is in its own process group with the CLI's own force-kill backstop,
+  // so SIGTERM alone is both the most and the least we can honestly do.
+  dispose(forceKill = true): void {
     this.disposed = true;
 
-    if (this.child) {
-      const child = this.child;
-      this.child = undefined;
+    const managed = this.managed;
+    if (!managed) return;
+    this.managed = undefined;
+    this.child = undefined;
 
-      this.outputChannel.info(`[watch] sending SIGTERM (pid ${child.pid})`);
-      killProcessTree(child, "SIGTERM");
+    this.outputChannel.info(`[watch] sending SIGTERM (pid ${managed.pid})`);
 
-      const killTimeout =
-        vscode.workspace
-          .getConfiguration("gotest")
-          .get<number>("forceKillTimeout", 600) * 1000;
-      const forceKill = setTimeout(() => {
-        if (!child.killed) {
-          killProcessTree(child, "SIGKILL");
-        }
-      }, killTimeout);
-
-      child.on("close", () => {
-        clearTimeout(forceKill);
-      });
+    if (!forceKill) {
+      // Shutdown. VS Code's deactivate window is seconds, so any SIGKILL timer
+      // long enough to respect a fixture teardown would never fire, and any
+      // timer short enough to fire would cut that teardown off. The child has
+      // its own process group and the CLI's force-kill backstop, so SIGTERM
+      // alone is both the most and the least we can honestly do.
+      killProcessTree(managed.child, "SIGTERM");
+      managed.dispose();
+      return;
     }
+
+    // A daemon holding fixtures open by design: it gets the teardown grace.
+    void managed.terminate("teardown");
   }
 }
 
@@ -359,7 +368,7 @@ export class WatchManager implements vscode.Disposable {
     this.updateStatusBar();
   }
 
-  stopAll(): void {
+  stopAll(forceKill = true): void {
     this.outputChannel.info(
       `[watch] stopping all (${this.watchers.size} active)`,
     );
@@ -368,7 +377,7 @@ export class WatchManager implements vscode.Disposable {
       if (recordId) {
         this.registry.cancel(recordId);
       }
-      watcher.dispose();
+      watcher.dispose(forceKill);
       const run = this.activeRuns.get(scope);
       if (run) {
         run.end();
@@ -385,7 +394,7 @@ export class WatchManager implements vscode.Disposable {
   }
 
   dispose(): void {
-    this.stopAll();
+    this.stopAll(false);
     this.statusBar.dispose();
   }
 

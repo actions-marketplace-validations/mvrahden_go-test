@@ -7,13 +7,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
+
+	"golang.org/x/tools/go/packages"
 
 	. "github.com/mvrahden/go-test/cmd/gotest"
 	"github.com/mvrahden/go-test/internal/config"
 	"github.com/mvrahden/go-test/internal/gotestgen"
 	"github.com/mvrahden/go-test/internal/gotestrunner"
 	"github.com/mvrahden/go-test/internal/gotestspec"
+	"github.com/mvrahden/go-test/internal/lint"
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
 
@@ -170,6 +175,112 @@ func (s *CmdGotestTestSuite) TestDefaultArgs(t *gotest.T) {
 	})
 }
 
+// specTableEntries extracts `name` from rows shaped `| `name` | ... |` within the
+// doc section starting at heading until the next heading of the same level.
+func specTableEntries(doc, heading string) map[string]bool {
+	return specTableEntriesUntil(doc, heading, "\n### ")
+}
+
+// specTableEntriesUntil is specTableEntries with an explicit section
+// terminator, for sections delimited by a different heading level.
+func specTableEntriesUntil(doc, heading, next string) map[string]bool {
+	start := strings.Index(doc, heading)
+	if start < 0 {
+		return nil
+	}
+	section := doc[start:]
+	if end := strings.Index(section[len(heading):], next); end >= 0 {
+		section = section[:len(heading)+end]
+	}
+	entries := map[string]bool{}
+	for _, m := range regexp.MustCompile("(?m)^\\| `([^`=<]+)").FindAllStringSubmatch(section, -1) {
+		entries[strings.TrimSpace(m[1])] = true
+	}
+	return entries
+}
+
+// TestCLISurfaceMatchesSpec is a drift guard: the CLI tables in docs/design/spec.md
+// must stay in sync with the actual subcommand and flag registries.
+func (s *CmdGotestTestSuite) TestCLISurfaceMatchesSpec(t *gotest.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "design", "spec.md"))
+	gotest.NoError(t, err)
+	doc := string(data)
+
+	t.When("comparing the Subcommands table", func(w *gotest.T) {
+		documented := specTableEntries(doc, "### Subcommands")
+		w.It("documents every registered subcommand", func(it *gotest.T) {
+			for cmd := range ExportKnownSubcommands {
+				gotest.True(it, documented[cmd], "subcommand %q missing from spec.md", cmd)
+			}
+		})
+		w.It("documents no phantom subcommands", func(it *gotest.T) {
+			for cmd := range documented {
+				gotest.True(it, ExportKnownSubcommands[cmd], "spec.md documents unknown subcommand %q", cmd)
+			}
+		})
+	})
+
+	t.When("comparing the Flags table", func(w *gotest.T) {
+		documented := specTableEntries(doc, "### Flags")
+		w.It("documents every registered --flag", func(it *gotest.T) {
+			for flag := range ExportGotestFlags {
+				gotest.True(it, documented[flag], "flag %q missing from spec.md", flag)
+			}
+		})
+		w.It("documents no phantom flags", func(it *gotest.T) {
+			for flag := range documented {
+				_, known := ExportGotestFlags[flag]
+				gotest.True(it, known, "spec.md documents unknown flag %q", flag)
+			}
+		})
+	})
+
+	t.When("comparing the Linter rule tables", func(w *gotest.T) {
+		documented := specTableEntriesUntil(doc, "## Linter", "\n## ")
+		w.It("documents every registered lint rule", func(it *gotest.T) {
+			for _, rule := range lint.RuleIDs() {
+				gotest.True(it, documented[string(rule)], "lint rule %q missing from spec.md", rule)
+			}
+		})
+		w.It("documents no phantom lint rules", func(it *gotest.T) {
+			for id := range documented {
+				gotest.True(it, lint.Known(lint.Rule(id)), "spec.md documents unknown lint rule %q", id)
+			}
+		})
+	})
+}
+
+// CmdEnvTestSuite is deliberately sequential: Setenv is illegal in parallel tests.
+type CmdEnvTestSuite struct{}
+
+func (s *CmdEnvTestSuite) TestDetectCIEnv(t *gotest.T) {
+	for sub, tc := range gotest.Each(t, []struct {
+		Desc     string
+		gotestCI string
+		ci       string
+		expect   bool
+	}{
+		{Desc: "unset both", gotestCI: "", ci: "", expect: false},
+		{Desc: "GOTEST_CI=1", gotestCI: "1", ci: "", expect: true},
+		{Desc: "GOTEST_CI=true", gotestCI: "true", ci: "", expect: true},
+		{Desc: "typo'd opt-in stays on", gotestCI: "yes", ci: "", expect: true},
+		{Desc: "GOTEST_CI=0 opts out of CI env", gotestCI: "0", ci: "true", expect: false},
+		{Desc: "GOTEST_CI=false opts out", gotestCI: "false", ci: "1", expect: false},
+		{Desc: "CI set", gotestCI: "", ci: "true", expect: true},
+		{Desc: "CI=false is not CI", gotestCI: "", ci: "false", expect: false},
+		{Desc: "CI=0 is not CI", gotestCI: "", ci: "0", expect: false},
+	}) {
+		sub.Setenv("GOTEST_CI", tc.gotestCI)
+		sub.Setenv("CI", tc.ci)
+		gotest.Equal(sub, tc.expect, ExportDetectCIEnv())
+	}
+}
+
+func (s *CmdGotestTestSuite) TestScaffoldRejectsUnknownFlags(t *gotest.T) {
+	code := ExportRunScaffold(Invocation{Args: []string{"--contract", "io.Reader"}})
+	gotest.Equal(t, 2, code)
+}
+
 func (s *CmdGotestTestSuite) TestSplitArgs(t *gotest.T) {
 	for sub, tc := range gotest.Each(t, []struct {
 		Desc         string
@@ -196,6 +307,7 @@ func (s *CmdGotestTestSuite) TestSplitArgs(t *gotest.T) {
 		{Desc: "go test value flag with space", inArgs: []string{"-run", "TestFoo", "./..."}, allowed: ExportTestAllowed, expectOwn: nil, expectGoTest: []string{"-run", "TestFoo", "./..."}},
 		{Desc: "go test value flag with equals", inArgs: []string{"-timeout=30s"}, allowed: ExportTestAllowed, expectOwn: nil, expectGoTest: []string{"-timeout=30s"}},
 		{Desc: "watch: no flags", inArgs: []string{"./pkg/..."}, allowed: ExportWatchAllowed, expectOwn: nil, expectGoTest: []string{"./pkg/..."}},
+		{Desc: "watch: spec flag", inArgs: []string{"--spec", "-v", "./..."}, allowed: ExportWatchAllowed, expectOwn: []string{"--spec"}, expectGoTest: []string{"-v", "./..."}},
 		{Desc: "watch: json flag", inArgs: []string{"-json", "./pkg/..."}, allowed: ExportWatchAllowed, expectOwn: nil, expectGoTest: []string{"-json", "./pkg/..."}},
 		{Desc: "watch: debounce with json", inArgs: []string{"--debounce=500ms", "-json", "./..."}, allowed: ExportWatchAllowed, expectOwn: []string{"--debounce=500ms"}, expectGoTest: []string{"-json", "./..."}},
 		{Desc: "watch: debug and ci", inArgs: []string{"--debug", "--ci", "-v", "./..."}, allowed: ExportWatchAllowed, expectOwn: []string{"--debug", "--ci"}, expectGoTest: []string{"-v", "./..."}},
@@ -254,6 +366,8 @@ func (s *CmdGotestTestSuite) TestPackagePatterns(t *gotest.T) {
 			{Desc: "stops at -args", args: []string{"-v", "./...", "-args", "-custom", "./not/a/pkg"}, expected: []string{"./..."}},
 			{Desc: "no args defaults to dot", args: nil, expected: []string{"."}},
 			{Desc: "bare relative path", args: []string{"-v", "./cmd/gotest"}, expected: []string{"./cmd/gotest"}},
+			{Desc: "space-separated flag value with a slash is not a package", args: []string{"./pkg/a", "-bench", "^BenchmarkFooTestSuite$/^BenchmarkParse$"}, expected: []string{"./pkg/a"}},
+			{Desc: "space-separated -run value with a slash is not a package", args: []string{"-run", "TestFoo/sub", "./pkg/a"}, expected: []string{"./pkg/a"}},
 		}) {
 			result := ExtractPackagePatterns(tc.args)
 			gotest.Equal(sub, tc.expected, result)
@@ -470,20 +584,14 @@ func (s *CmdGotestTestSuite) TestResolveGlobalTimeout(t *gotest.T) {
 func (s *CmdGotestTestSuite) TestRunDiscover_SimpleSuite(t *gotest.T) {
 	t.It("discovers suites in examples/cart", func(it *gotest.T) {
 		absExamples, err := filepath.Abs(filepath.Join("..", "..", "examples"))
-		if err != nil {
-			it.T().Fatal(err)
-		}
+		gotest.NoError(it, err, "%v", err)
 		if _, err := os.Stat(filepath.Join(absExamples, "go.mod")); err != nil {
 			it.Skipf("examples directory not found: %v", err)
 		}
 
-		loadResults, err := gotestgen.LoadPackages([]string{filepath.Join(absExamples, "cart")}, nil)
-		if err != nil {
-			it.T().Fatalf("LoadPackages: %v", err)
-		}
-		if len(loadResults) == 0 {
-			it.T().Fatal("expected at least one load result")
-		}
+		loadResults, _, err := gotestgen.LoadPackages([]string{filepath.Join(absExamples, "cart")}, nil)
+		gotest.NoError(it, err, "LoadPackages: %v", err)
+		gotest.NotEmpty(it, loadResults, "expected at least one load result")
 
 		out := ExportDiscoverOutput{}
 		c := gotestgen.NewCollector()
@@ -493,39 +601,34 @@ func (s *CmdGotestTestSuite) TestRunDiscover_SimpleSuite(t *gotest.T) {
 				Dir:        lr.PkgDir,
 			}
 
-			if lr.Ptest != nil {
-				result := c.CollectSuiteSpecs(lr.Ptest)
-				if len(result.Errs) > 0 {
-					it.T().Fatalf("collector error: %v", result.Errs[0].Err)
+			collect := func(pkg *packages.Package) {
+				result := c.CollectSuiteSpecs(pkg)
+				var collectorErrs []string
+				for _, cerr := range result.Errs {
+					collectorErrs = append(collectorErrs, cerr.Err.Error())
 				}
+				gotest.Empty(it, collectorErrs, "collector errors")
 				for _, suite := range result.Suites {
 					pkgEntry.Suites = append(pkgEntry.Suites, ExportBuildDiscoverSuite(suite))
 				}
 			}
+			if lr.Ptest != nil {
+				collect(lr.Ptest)
+			}
 			if lr.Pxtest != nil {
-				result := c.CollectSuiteSpecs(lr.Pxtest)
-				if len(result.Errs) > 0 {
-					it.T().Fatalf("collector error: %v", result.Errs[0].Err)
-				}
-				for _, suite := range result.Suites {
-					pkgEntry.Suites = append(pkgEntry.Suites, ExportBuildDiscoverSuite(suite))
-				}
+				collect(lr.Pxtest)
 			}
 
 			out.Packages = append(out.Packages, pkgEntry)
 		}
 
-		if len(out.Packages) != 1 {
-			it.T().Fatalf("expected 1 package, got %d", len(out.Packages))
-		}
+		gotest.Len(it, out.Packages, 1)
 
 		pkg := out.Packages[0]
 		gotest.Equal(it, "github.com/mvrahden/go-test/examples/cart", pkg.ImportPath)
 		gotest.True(it, filepath.IsAbs(pkg.Dir), "dir should be absolute, got %q", pkg.Dir)
 
-		if len(pkg.Suites) != 4 {
-			it.T().Fatalf("expected 4 suites, got %d", len(pkg.Suites))
-		}
+		gotest.Len(it, pkg.Suites, 4)
 
 		suiteByNameAndFile := map[string]ExportDiscoverSuite{}
 		for i := range pkg.Suites {
@@ -546,9 +649,7 @@ func (s *CmdGotestTestSuite) TestRunDiscover_SimpleSuite(t *gotest.T) {
 		gotest.Equal(it, expectedLifecycle, st.Lifecycle)
 		gotest.Empty(it, st.Fixtures)
 
-		if len(st.Methods) != 9 {
-			it.T().Fatalf("expected 9 methods, got %d", len(st.Methods))
-		}
+		gotest.Len(it, st.Methods, 9)
 		gotest.Equal(it, "TestAddSingleItem", st.Methods[0].Name)
 		gotest.Equal(it, 15, st.Methods[0].Line)
 		gotest.Equal(it, 1, st.Methods[0].Col)
@@ -561,9 +662,7 @@ func (s *CmdGotestTestSuite) TestRunDiscover_SimpleSuite(t *gotest.T) {
 		// Verify pxtest ShoppingCartTestSuite
 		sx := suiteByNameAndFile["ShoppingCartTestSuite:suite_ext_test.go"]
 		gotest.Equal(it, "ShoppingCartTestSuite", sx.Name)
-		if len(sx.Methods) != 2 {
-			it.T().Fatalf("expected 2 pxtest methods, got %d", len(sx.Methods))
-		}
+		gotest.Len(it, sx.Methods, 2)
 		gotest.Equal(it, "TestAddItem", sx.Methods[0].Name)
 		gotest.Equal(it, "TestRemoveItem", sx.Methods[1].Name)
 
@@ -573,13 +672,9 @@ func (s *CmdGotestTestSuite) TestRunDiscover_SimpleSuite(t *gotest.T) {
 
 		// Verify JSON serialization roundtrip
 		data, err := json.Marshal(out)
-		if err != nil {
-			it.T().Fatalf("json.Marshal: %v", err)
-		}
+		gotest.NoError(it, err, "json.Marshal: %v", err)
 		var roundtrip ExportDiscoverOutput
-		if err := json.Unmarshal(data, &roundtrip); err != nil {
-			it.T().Fatalf("json.Unmarshal: %v", err)
-		}
+		gotest.NoError(it, json.Unmarshal(data, &roundtrip))
 		gotest.Len(it, roundtrip.Packages, 1)
 	})
 }
@@ -605,6 +700,16 @@ func (s *CmdGotestTestSuite) TestFocusViolation_String(t *gotest.T) {
 			v:        FocusViolation{SuiteName: "F_MyTestSuite", MethodName: "F_TestFoo"},
 			expected: "  F_MyTestSuite.F_TestFoo",
 		},
+		{
+			Desc:     "suite violation with position",
+			v:        FocusViolation{SuiteName: "F_MyTestSuite", Pos: "pkg/user/user_test.go:12"},
+			expected: "  pkg/user/user_test.go:12  type F_MyTestSuite",
+		},
+		{
+			Desc:     "method violation with position",
+			v:        FocusViolation{SuiteName: "MyTestSuite", MethodName: "F_TestSomething", Pos: "pkg/user/user_test.go:28"},
+			expected: "  pkg/user/user_test.go:28  MyTestSuite.F_TestSomething",
+		},
 	}) {
 		gotest.Equal(sub, tc.expected, tc.v.String())
 	}
@@ -614,46 +719,31 @@ func (s *CmdGotestTestSuite) TestGenerateOverlay(t *gotest.T) {
 	t.When("suites are present", func(w *gotest.T) {
 		w.It("produces valid overlay JSON", func(it *gotest.T) {
 			absExamples, err := filepath.Abs(filepath.Join("..", "..", "examples"))
-			if err != nil {
-				it.T().Fatal(err)
-			}
+			gotest.NoError(it, err, "%v", err)
 			if _, err := os.Stat(filepath.Join(absExamples, "go.mod")); err != nil {
 				it.Skipf("examples directory not found: %v", err)
 			}
 
-			loaded, err := gotestgen.LoadPackages([]string{filepath.Join(absExamples, "cart")}, nil)
-			if err != nil {
-				it.T().Fatalf("LoadPackages: %v", err)
-			}
+			loaded, _, err := gotestgen.LoadPackages([]string{filepath.Join(absExamples, "cart")}, nil)
+			gotest.NoError(it, err, "LoadPackages: %v", err)
 			results, _, err := gotestgen.GenerateFromLoaded(loaded)
-			if err != nil {
-				it.T().Fatalf("GenerateFromLoaded: %v", err)
-			}
-			if len(results) == 0 {
-				it.T().Fatal("expected at least one generate result")
-			}
+			gotest.NoError(it, err, "GenerateFromLoaded: %v", err)
+			gotest.NotEmpty(it, results, "expected at least one generate result")
 
 			tmpDir, err := gotestrunner.WriteOverlay(results)
-			if err != nil {
-				it.T().Fatalf("WriteOverlay: %v", err)
-			}
+			gotest.NoError(it, err, "WriteOverlay: %v", err)
 			defer os.RemoveAll(tmpDir)
 
 			overlayFile := filepath.Join(tmpDir, "overlay.json")
-			if _, err := os.Stat(overlayFile); err != nil {
-				it.T().Fatalf("overlay.json not found: %v", err)
-			}
+			_, err = os.Stat(overlayFile)
+			gotest.NoError(it, err)
 
 			data, err := os.ReadFile(overlayFile)
-			if err != nil {
-				it.T().Fatalf("reading overlay.json: %v", err)
-			}
+			gotest.NoError(it, err, "reading overlay.json: %v", err)
 			var overlayContent struct {
 				Replace map[string]string `json:"Replace"`
 			}
-			if err := json.Unmarshal(data, &overlayContent); err != nil {
-				it.T().Fatalf("overlay.json is not valid JSON: %v", err)
-			}
+			gotest.NoError(it, json.Unmarshal(data, &overlayContent), "overlay.json is not valid JSON")
 			gotest.NotEmpty(it, overlayContent.Replace, "overlay.json Replace map is empty")
 		})
 	})
@@ -661,26 +751,16 @@ func (s *CmdGotestTestSuite) TestGenerateOverlay(t *gotest.T) {
 	t.When("no suites", func(w *gotest.T) {
 		w.It("returns empty results for package without suites", func(it *gotest.T) {
 			tmpDir, err := os.MkdirTemp("", "overlay-test-nosuite-*")
-			if err != nil {
-				it.T().Fatal(err)
-			}
+			gotest.NoError(it, err, "%v", err)
 			defer os.RemoveAll(tmpDir)
 
-			if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module nosuite\n\ngo 1.24\n"), 0600); err != nil {
-				it.T().Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0600); err != nil {
-				it.T().Fatal(err)
-			}
+			gotest.NoError(it, os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module nosuite\n\ngo 1.25\n"), 0600))
+			gotest.NoError(it, os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0600))
 
-			loaded, err := gotestgen.LoadPackages([]string{tmpDir}, nil)
-			if err != nil {
-				it.T().Fatalf("LoadPackages: %v", err)
-			}
+			loaded, _, err := gotestgen.LoadPackages([]string{tmpDir}, nil)
+			gotest.NoError(it, err, "LoadPackages: %v", err)
 			results, _, err := gotestgen.GenerateFromLoaded(loaded)
-			if err != nil {
-				it.T().Fatalf("GenerateFromLoaded: %v", err)
-			}
+			gotest.NoError(it, err, "GenerateFromLoaded: %v", err)
 
 			var allResults gotestgen.GenerateResults
 			allResults = append(allResults, results...)
@@ -770,26 +850,18 @@ func (s *CmdGotestTestSuite) TestSpecFlagParsing(t *gotest.T) {
 func (s *CmdGotestTestSuite) TestRunSpec_InputStdin(t *gotest.T) {
 	t.It("renders spec output from stdin-like JSON", func(it *gotest.T) {
 		absExamples, err := filepath.Abs(filepath.Join("..", "..", "examples"))
-		if err != nil {
-			it.T().Fatal(err)
-		}
+		gotest.NoError(it, err, "%v", err)
 		if _, err := os.Stat(filepath.Join(absExamples, "go.mod")); err != nil {
 			it.Skipf("examples directory not found: %v", err)
 		}
 
-		loaded, err := gotestgen.LoadPackages([]string{filepath.Join(absExamples, "cart")}, nil)
-		if err != nil {
-			it.T().Fatalf("LoadPackages: %v", err)
-		}
+		loaded, _, err := gotestgen.LoadPackages([]string{filepath.Join(absExamples, "cart")}, nil)
+		gotest.NoError(it, err, "LoadPackages: %v", err)
 		results, _, err := gotestgen.GenerateFromLoaded(loaded)
-		if err != nil {
-			it.T().Fatalf("GenerateFromLoaded: %v", err)
-		}
+		gotest.NoError(it, err, "GenerateFromLoaded: %v", err)
 
 		tmpDir, err := gotestrunner.WriteOverlay(results)
-		if err != nil {
-			it.T().Fatalf("WriteOverlay: %v", err)
-		}
+		gotest.NoError(it, err, "WriteOverlay: %v", err)
 		defer os.RemoveAll(tmpDir)
 
 		cmd := exec.CommandContext(context.Background(), "go", //nolint:gosec // G204: go tool with controlled arguments
@@ -800,19 +872,13 @@ func (s *CmdGotestTestSuite) TestRunSpec_InputStdin(t *gotest.T) {
 		cmd.Stdout = &jsonOut
 		cmd.Stderr = os.Stderr
 		mp := gotestrunner.NewManagedProcess(cmd, gotestrunner.ProcessConfig{Grace: gotestrunner.GraceKill})
-		if err := mp.Start(); err != nil {
-			it.T().Fatalf("go test start: %v", err)
-		}
+		gotest.NoError(it, mp.Start(), "go test start")
 		_ = mp.WaitWithGrace(context.Background())
-		if cmd.ProcessState == nil {
-			it.T().Fatal("go test: process state is nil")
-		}
+		gotest.NotZero(it, cmd.ProcessState, "go test: process state is nil")
 		jsonData := jsonOut.Bytes()
 
 		events, err := gotestspec.ParseEvents(bytes.NewReader(jsonData))
-		if err != nil {
-			it.T().Fatalf("ParseEvents: %v", err)
-		}
+		gotest.NoError(it, err, "ParseEvents: %v", err)
 
 		tree := gotestspec.BuildTree(events)
 
@@ -821,6 +887,116 @@ func (s *CmdGotestTestSuite) TestRunSpec_InputStdin(t *gotest.T) {
 
 		output := buf.String()
 		gotest.Contains(it, output, "ShoppingCart")
+	})
+}
+
+func (s *CmdGotestTestSuite) TestInputModesShareOneExitRule(t *gotest.T) {
+	// One failing and one passing stream, saved the way CI replays them. In a
+	// pipe without pipefail the exit code of the rendering command is the only
+	// verdict CI ever sees — and `spec --input` used to return 0 on anything.
+	failingStream := `{"Action":"run","Package":"example.com/pkg","Test":"TestBoom"}
+{"Action":"output","Package":"example.com/pkg","Test":"TestBoom","Output":"--- FAIL: TestBoom (0.00s)\n"}
+{"Action":"fail","Package":"example.com/pkg","Test":"TestBoom"}
+{"Action":"fail","Package":"example.com/pkg"}
+`
+	greenStream := `{"Action":"run","Package":"example.com/pkg","Test":"TestOK"}
+{"Action":"pass","Package":"example.com/pkg","Test":"TestOK"}
+{"Action":"pass","Package":"example.com/pkg"}
+`
+
+	writeStream := func(w *gotest.T, content string) string {
+		path := filepath.Join(w.TempDir(), "events.json")
+		gotest.NoError(w, os.WriteFile(path, []byte(content), 0o600))
+		return path
+	}
+
+	t.When("the stream contains a failure", func(w *gotest.T) {
+		input := writeStream(w, failingStream)
+		out := filepath.Join(w.TempDir(), "out.txt")
+
+		w.It("spec --input exits nonzero", func(it *gotest.T) {
+			gotest.Equal(it, 1, ExportRunSpecFromInput(input, "terminal", out, true, false))
+		})
+
+		w.It("summary --input agrees", func(it *gotest.T) {
+			gotest.Equal(it, 1, ExportRunSummaryFromInput(input, "terminal", out, "", true, false, false))
+		})
+	})
+
+	t.When("the stream is clean", func(w *gotest.T) {
+		input := writeStream(w, greenStream)
+		out := filepath.Join(w.TempDir(), "out.txt")
+
+		w.It("both exit zero", func(it *gotest.T) {
+			gotest.Equal(it, 0, ExportRunSpecFromInput(input, "terminal", out, true, false))
+			gotest.Equal(it, 0, ExportRunSummaryFromInput(input, "terminal", out, "", true, false, false))
+		})
+	})
+}
+
+// TestRenderOnlySeparatesVerdictFromRendering covers the escape hatch for
+// clients that render a stream rather than gate on it. The exit code of
+// `--input` carries two answers at once — "did the tests pass" and "did I
+// render" — and a renderer only ever needed the second. --render-only drops the
+// first without ever hiding the second.
+func (s *CmdGotestTestSuite) TestRenderOnlySeparatesVerdictFromRendering(t *gotest.T) {
+	failingStream := `{"Action":"run","Package":"example.com/pkg","Test":"TestBoom"}
+{"Action":"output","Package":"example.com/pkg","Test":"TestBoom","Output":"--- FAIL: TestBoom (0.00s)\n"}
+{"Action":"fail","Package":"example.com/pkg","Test":"TestBoom"}
+{"Action":"fail","Package":"example.com/pkg"}
+`
+
+	writeStream := func(w *gotest.T, content string) string {
+		path := filepath.Join(w.TempDir(), "events.json")
+		gotest.NoError(w, os.WriteFile(path, []byte(content), 0o600))
+		return path
+	}
+
+	t.When("a failing stream is rendered with --render-only", func(w *gotest.T) {
+		input := writeStream(w, failingStream)
+		out := filepath.Join(w.TempDir(), "out.txt")
+
+		w.It("spec reports success, because rendering succeeded", func(it *gotest.T) {
+			gotest.Equal(it, 0, ExportRunSpecFromInput(input, "terminal", out, true, true))
+		})
+
+		w.It("summary agrees, keeping the two input modes on one rule", func(it *gotest.T) {
+			gotest.Equal(it, 0, ExportRunSummaryFromInput(input, "terminal", out, "", true, false, true))
+		})
+
+		w.It("still renders the failure into the output", func(it *gotest.T) {
+			gotest.Equal(it, 0, ExportRunSpecFromInput(input, "terminal", out, true, true))
+			data, err := os.ReadFile(out)
+			gotest.NoError(it, err)
+			gotest.Contains(it, string(data), "Boom")
+		})
+	})
+
+	t.When("the input cannot be read", func(w *gotest.T) {
+		missing := filepath.Join(w.TempDir(), "absent.json")
+		out := filepath.Join(w.TempDir(), "out.txt")
+
+		// The whole point of the flag is to suppress a verdict about the tests,
+		// never a report that the command itself failed.
+		w.It("spec still fails, because nothing was rendered", func(it *gotest.T) {
+			gotest.Equal(it, 2, ExportRunSpecFromInput(missing, "terminal", out, true, true))
+		})
+
+		w.It("summary still fails too", func(it *gotest.T) {
+			gotest.Equal(it, 2, ExportRunSummaryFromInput(missing, "terminal", out, "", true, false, true))
+		})
+	})
+
+	t.When("--render-only is passed without --input", func(w *gotest.T) {
+		// Suppressing the verdict of a real run would turn a red pipeline green,
+		// so the flag is refused outside the replay path it was built for.
+		w.It("spec rejects it as a usage error", func(it *gotest.T) {
+			gotest.Equal(it, 2, ExportRunSpec(Invocation{Args: []string{"--render-only", "./..."}}))
+		})
+
+		w.It("summary rejects it as a usage error", func(it *gotest.T) {
+			gotest.Equal(it, 2, ExportRunSummary(Invocation{Args: []string{"--render-only", "./..."}}))
+		})
 	})
 }
 

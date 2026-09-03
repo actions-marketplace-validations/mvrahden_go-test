@@ -1,6 +1,11 @@
 name: test
 
 on:
+  # main is tested after merge too: a direct push, or a merge result that no
+  # pull request ever built, otherwise reaches a release unverified.
+  push:
+    branches: [main]
+    paths-ignore: [vscode-gotest/**]
   pull_request:
     types: [opened, synchronize, reopened]
     paths-ignore: [vscode-gotest/**]
@@ -17,10 +22,10 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version: "1.27"
       - name: Test (stdlib)
         run: go test -ldflags=-checklinkname=0 ./... -race
       - name: Test (suites)
@@ -34,10 +39,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: ["1.24", "1.25", "1.26"]
+        go-version: ["1.25", "1.26", "1.27"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go-version }}
       - name: Test (stdlib)

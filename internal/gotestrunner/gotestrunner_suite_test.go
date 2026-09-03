@@ -17,6 +17,7 @@ import (
 	"github.com/mvrahden/go-test/internal/about"
 	"github.com/mvrahden/go-test/internal/gotestgen"
 	"github.com/mvrahden/go-test/internal/gotestrunner"
+	"github.com/mvrahden/go-test/internal/gotestspec"
 	"github.com/mvrahden/go-test/internal/protocol"
 	"github.com/mvrahden/go-test/pkg/gotest"
 )
@@ -790,6 +791,37 @@ func (s *GotestrunnerTestSuite) TestBuildSuiteCmd(t *gotest.T) {
 
 // --- OutputCollector tests ---
 
+func (s *GotestrunnerTestSuite) TestExclusiveDispatch(t *gotest.T) {
+	t.When("BuildSuiteTargets sees a suite marked exclusive", func(w *gotest.T) {
+		compiled := []gotestrunner.CompileResult{{Package: "example.com/pkg", BinaryPath: "/tmp/pkg.test"}}
+		suitesByPkg := map[string][]string{"example.com/pkg": {"TimingTestSuite", "PlainTestSuite"}}
+		exclusiveByPkg := map[string]map[string]bool{"example.com/pkg": {"TimingTestSuite": true}}
+		targets := gotestrunner.BuildSuiteTargets(compiled, suitesByPkg, map[string]string{"example.com/pkg": "/src"}, exclusiveByPkg, nil, "")
+
+		w.It("carries the flag on exactly that suite's target", func(it *gotest.T) {
+			byName := map[string]bool{}
+			for i := range targets {
+				byName[targets[i].SuiteName] = targets[i].Exclusive
+			}
+			gotest.True(it, byName["TestTimingTestSuite"])
+			gotest.False(it, byName["TestPlainTestSuite"])
+		})
+	})
+
+	t.When("ordering exclusive targets for serial dispatch", func(w *gotest.T) {
+		w.It("sorts deterministically by package then suite name", func(it *gotest.T) {
+			targets := []gotestrunner.SuiteTarget{
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "b", SuiteName: "TestZ"}},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a", SuiteName: "TestB"}},
+				{SuiteSpec: gotestrunner.SuiteSpec{Package: "a", SuiteName: "TestA"}},
+			}
+			idx := []int{0, 1, 2}
+			gotestrunner.ExportSortTargetIndices(targets, idx)
+			gotest.Equal(it, []int{2, 1, 0}, idx)
+		})
+	})
+}
+
 func (s *GotestrunnerTestSuite) TestOutputCollector(t *gotest.T) {
 	pass := func(d time.Duration) gotestrunner.SuiteResult {
 		return gotestrunner.SuiteResult{Stdout: []byte("PASS\n"), ExitCode: 0, Duration: d}
@@ -804,7 +836,7 @@ func (s *GotestrunnerTestSuite) TestOutputCollector(t *gotest.T) {
 			c.Register("example.com/c", 1)
 
 			c.RecordResult("example.com/c", 0, pass(30*time.Millisecond))
-			gotest.Equal(it, "", stdout.String(), "c should be buffered because a and b are not done")
+			gotest.Empty(it, stdout.String(), "c should be buffered because a and b are not done")
 
 			c.RecordResult("example.com/a", 0, pass(10*time.Millisecond))
 			gotest.Equal(it, "ok  \texample.com/a\t0.010s\n", stdout.String(), "a should flush as the head")
@@ -848,6 +880,58 @@ func (s *GotestrunnerTestSuite) TestOutputCollector(t *gotest.T) {
 			gotest.True(it, c.AnyFailed())
 		})
 
+		w.It("registers a signal-killed binary as a failure", func(it *gotest.T) {
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &stderr))
+			c.Register("example.com/oom", 1)
+			// A signal-terminated process reports -1. The worst-code comparison
+			// never registered it, so an OOM-killed suite printed FAIL and the
+			// run still exited 0.
+			c.RecordResult("example.com/oom", 0, gotestrunner.SuiteResult{ExitCode: -1})
+			gotest.True(it, c.AnyFailed())
+			gotest.Equal(it, 1, c.WorstExitCode(),
+				"abnormal termination must raise the exit code, not slip under it")
+			gotest.Contains(it, stdout.String()+stderr.String(), "terminated by signal",
+				"the binary's own output ends mid-stream, so the verdict must say what happened")
+		})
+
+		w.It("books a failed compile as a failed package", func(it *gotest.T) {
+			var stdout, stderr bytes.Buffer
+			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&stdout, &stderr))
+			gotestrunner.ExportBookBuildFailures(c, nil, []gotestrunner.BuildFailure{
+				{Package: "example.com/broken", Err: fmt.Errorf("compile example.com/broken: exit status 1")},
+			})
+			gotest.True(it, c.AnyFailed())
+			gotest.Equal(it, 2, c.WorstExitCode(),
+				"a compile failure is exit 2, matching batch mode")
+			gotest.Contains(it, stdout.String()+stderr.String(), "compile example.com/broken",
+				"the failed package must be visible in the stream, not only on raw stderr")
+		})
+	})
+
+	t.When("a shared teardown failure lands after the stream ended", func(w *gotest.T) {
+		w.It("reaches the exit code and every artifact rendered from the stream", func(it *gotest.T) {
+			result := gotestrunner.PipelineResult{CapturedJSON: []byte{}}
+			gotestrunner.ExportApplyTeardownFailure(&result,
+				fmt.Errorf("shared fixture teardown failed; see AfterAll errors above"))
+
+			gotest.Equal(it, 1, result.ExitCode)
+
+			// The captured stream is the single source spec/summary/markdown
+			// artifacts derive from; an exit-code-only failure rendered "all
+			// passed" beside exit 1 in a CI comment.
+			events, err := gotestspec.ParseEvents(bytes.NewReader(result.CapturedJSON))
+			gotest.NoError(it, err)
+			tree := gotestspec.BuildTree(events)
+			gotest.True(it, gotestspec.HasFailures(tree),
+				"the failure must be derivable from the stream itself")
+
+			var buf bytes.Buffer
+			gotestspec.RenderSummary(&buf, tree, gotestspec.WithNoColor())
+			gotest.Contains(it, buf.String(), "shared fixture teardown failed",
+				"a rendered artifact must carry the teardown failure")
+		})
+
 		w.It("tracks worst exit code", func(it *gotest.T) {
 			c := gotestrunner.NewOutputCollector(gotestrunner.RunBatchText, false, gotestrunner.WithWriters(&bytes.Buffer{}, &bytes.Buffer{}))
 			c.Register("example.com/a", 1)
@@ -866,7 +950,7 @@ func (s *GotestrunnerTestSuite) TestOutputCollector(t *gotest.T) {
 			c.RecordResult("example.com/a", 0, gotestrunner.SuiteResult{ExitCode: 1})
 			stdout.Reset()
 			c.Finalize([]string{"example.com/empty"})
-			gotest.Equal(it, "", stdout.String())
+			gotest.Empty(it, stdout.String())
 		})
 	})
 
@@ -995,6 +1079,7 @@ func (s *GotestrunnerTestSuite) TestIsPackageSummaryLine(t *gotest.T) {
 		{"ok package summary", "ok  \tpkg\t0.5s\n", true},
 		{"FAIL package summary", "FAIL\tpkg\t1.2s\n", true},
 		{"no test files summary", "?   \tpkg\t[no test files]\n", true},
+		{"no suites summary", "?   \tpkg\t[no suites]\n", true},
 		{"race separator", "==================\n", false},
 		{"race warning", "WARNING: DATA RACE\n", false},
 		{"race detector count", "Found 1 data race(s)\n", false},
@@ -1431,6 +1516,61 @@ func normalizeJSON(raw string) string {
 		lines = append(lines, string(normalized))
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func (s *GotestrunnerTestSuite) TestLogSlowBuild(t *gotest.T) {
+	t.When("a build outlives the threshold", func(w *gotest.T) {
+		w.It("logs the breach while running and the effective duration after", func(it *gotest.T) {
+			// A plain strings.Builder is the point: logSlowBuild owns the
+			// synchronization between its timer goroutine and done(), so a
+			// non-concurrent-safe writer must be race-free under -race.
+			var buf strings.Builder
+			done := gotestrunner.ExportLogSlowBuild(&buf, "test binary for example.com/pkg", 10*time.Millisecond)
+			time.Sleep(40 * time.Millisecond)
+			done()
+			gotest.Contains(it, buf.String(), "has been building for 10ms and is still running")
+			gotest.Contains(it, buf.String(), "finished building after")
+		})
+	})
+
+	t.When("a build finishes under the threshold", func(w *gotest.T) {
+		w.It("stays silent — fast builds are the expected case", func(it *gotest.T) {
+			var buf strings.Builder
+			done := gotestrunner.ExportLogSlowBuild(&buf, "x", time.Minute)
+			done()
+			gotest.Zero(it, buf.String())
+		})
+	})
+}
+
+func (s *GotestrunnerTestSuite) TestSanitizerAwareDispatch(t *gotest.T) {
+	procs := runtime.GOMAXPROCS(0)
+
+	t.When("an instrumentation build flag is active with default parallelism", func(w *gotest.T) {
+		w.It("halves the process cap so instrumented suites keep scheduling headroom", func(it *gotest.T) {
+			runFlags := []string{}
+			got := gotestrunner.ExportComputeDispatchConcurrency(&runFlags, 0, 64, true)
+			gotest.Equal(it, max(1, procs/2), got)
+		})
+
+		w.It("keeps an explicit --parallel budget untouched — the user's number wins", func(it *gotest.T) {
+			runFlags := []string{}
+			withRace := gotestrunner.ExportComputeDispatchConcurrency(&runFlags, 10, 64, true)
+			runFlags = []string{}
+			without := gotestrunner.ExportComputeDispatchConcurrency(&runFlags, 10, 64, false)
+			gotest.Equal(it, without, withRace)
+		})
+	})
+
+	t.When("detecting instrumentation from build flags", func(w *gotest.T) {
+		w.It("recognizes -race, -msan and -asan and nothing else", func(it *gotest.T) {
+			gotest.True(it, gotestrunner.SanitizerActive([]string{"-tags=integration", "-race"}))
+			gotest.True(it, gotestrunner.SanitizerActive([]string{"-msan"}))
+			gotest.True(it, gotestrunner.SanitizerActive([]string{"-asan"}))
+			gotest.False(it, gotestrunner.SanitizerActive([]string{"-tags=integration", "-cover"}))
+			gotest.False(it, gotestrunner.SanitizerActive(nil))
+		})
+	})
 }
 
 func (s *GotestrunnerTestSuite) TestOutputGolden(t *gotest.T) {

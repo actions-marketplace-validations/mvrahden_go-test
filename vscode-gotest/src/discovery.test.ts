@@ -1,19 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { SpawnScript } from "./scriptedSpawn.test-support.js";
 
-const { mockExecFileAsync, mockAccess, mockReadFile, mockShowWarningMessage } =
-  vi.hoisted(() => ({
-    mockExecFileAsync: vi.fn(
-      async (): Promise<{ stdout: string; stderr: string }> => ({
-        stdout: "{}",
-        stderr: "",
-      }),
-    ),
-    mockAccess: vi.fn(async () => {}),
-    mockReadFile: vi.fn(async (): Promise<string> => {
-      throw new Error("ENOENT");
-    }),
-    mockShowWarningMessage: vi.fn(async () => undefined),
-  }));
+const {
+  script,
+  mockKill,
+  mockClearBinaryCache,
+  mockAccess,
+  mockReadFile,
+  mockShowWarningMessage,
+} = vi.hoisted(() => ({
+  script: { once: [], always: undefined, calls: [] } as SpawnScript,
+  mockKill: vi.fn(),
+  mockClearBinaryCache: vi.fn(),
+  mockAccess: vi.fn(async () => {}),
+  mockReadFile: vi.fn(async (): Promise<string> => {
+    throw new Error("ENOENT");
+  }),
+  mockShowWarningMessage: vi.fn(async () => undefined),
+}));
 
 vi.mock("vscode", () => ({
   workspace: {
@@ -41,15 +45,19 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 vi.mock("node:child_process", async () => {
-  const util = await import("node:util");
-  const execFileFn: Record<symbol, unknown> = vi.fn() as never;
-  execFileFn[util.promisify.custom] = mockExecFileAsync;
-  return { execFile: execFileFn };
+  const { createScriptedSpawn } =
+    await import("./scriptedSpawn.test-support.js");
+  return { spawn: createScriptedSpawn(script, mockKill) };
 });
 
 vi.mock("./cli.js", () => ({
   buildCliCommand: async () => ({ bin: "go", args: ["run", "discover"] }),
   formatCliCommand: () => "go run discover",
+  clearBinaryCache: mockClearBinaryCache,
+  scopedConfig: () => ({ get: () => undefined }),
+  // Used by capture.js on a failed exit. A stub, not a copy: what it filters
+  // out is pinned in specView.test.ts, where the real one interprets an exit.
+  stripGoRunExitEcho: (stderr: string) => stderr.trim(),
 }));
 
 import { DiscoveryCache, DiscoveryService } from "./discovery.js";
@@ -64,16 +72,51 @@ function makeOutputChannel() {
   } as unknown as import("vscode").LogOutputChannel;
 }
 
-function successResponse(pkgs: Array<{ importPath: string; dir: string }>) {
+type Pkg = { importPath: string; dir: string };
+
+function discoverJson(pkgs: Pkg[]): string {
+  return JSON.stringify({
+    packages: pkgs.map((p) => ({
+      importPath: p.importPath,
+      dir: p.dir,
+      suites: [],
+    })),
+  });
+}
+
+function succeedsOnce(pkgs: Pkg[]) {
+  script.once.push({ stdout: [discoverJson(pkgs)] });
+}
+
+function succeedsAlways(pkgs: Pkg[]) {
+  script.always = { stdout: [discoverJson(pkgs)] };
+}
+
+function failsOnce(message: string) {
+  script.once.push({ code: 2, stderr: message });
+}
+
+function failsAlways(message: string) {
+  script.always = { code: 2, stderr: message };
+}
+
+function makeSnapshotSink() {
   return {
-    stdout: JSON.stringify({
-      packages: pkgs.map((p) => ({
-        importPath: p.importPath,
-        dir: p.dir,
-        suites: [],
-      })),
-    }),
-    stderr: "",
+    updated: [] as { workspaceDir: string; importPaths: string[] }[],
+    saves: 0,
+    update(
+      workspaceDir: string,
+      packages: { importPath: string }[],
+      _warnings: unknown[],
+    ) {
+      this.updated.push({
+        workspaceDir,
+        importPaths: packages.map((p) => p.importPath),
+      });
+    },
+    async save() {
+      this.saves++;
+    },
   };
 }
 
@@ -81,25 +124,29 @@ describe("DiscoveryService", () => {
   let cache: DiscoveryCache;
   let outputChannel: ReturnType<typeof makeOutputChannel>;
   let service: DiscoveryService;
+  let snapshot: ReturnType<typeof makeSnapshotSink>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    script.once = [];
+    script.always = undefined;
+    script.calls = [];
     mockAccess.mockResolvedValue(undefined);
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
     cache = new DiscoveryCache();
     outputChannel = makeOutputChannel();
+    snapshot = makeSnapshotSink();
     service = new DiscoveryService(
       cache,
       outputChannel as unknown as import("vscode").LogOutputChannel,
+      snapshot as never,
     );
   });
 
   describe("when discovery succeeds immediately", () => {
     it("updates the cache with discovered packages", async () => {
-      mockExecFileAsync.mockResolvedValueOnce(
-        successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-      );
+      succeedsOnce([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
 
       await service.discover("/ws", ["./..."]);
 
@@ -108,9 +155,7 @@ describe("DiscoveryService", () => {
     });
 
     it("does not show a warning toast", async () => {
-      mockExecFileAsync.mockResolvedValueOnce(
-        successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-      );
+      succeedsOnce([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
 
       await service.discover("/ws", ["./..."]);
 
@@ -118,23 +163,48 @@ describe("DiscoveryService", () => {
     });
 
     it("does not log at debug level", async () => {
-      mockExecFileAsync.mockResolvedValueOnce(
-        successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-      );
+      succeedsOnce([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
 
       await service.discover("/ws", ["./..."]);
 
       expect(outputChannel.debug).not.toHaveBeenCalled();
     });
+
+    it("persists a snapshot so the next activation has a tree", async () => {
+      succeedsOnce([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
+
+      await service.discover("/ws", ["./..."]);
+
+      expect(snapshot.updated).toEqual([
+        { workspaceDir: "/ws", importPaths: ["example.com/pkg"] },
+      ]);
+      expect(snapshot.saves).toBe(1);
+    });
+
+    it("snapshots the whole workspace after a single-package discovery", async () => {
+      succeedsOnce([
+        { importPath: "example.com/a", dir: "/ws/a" },
+        { importPath: "example.com/b", dir: "/ws/b" },
+      ]);
+      await service.discover("/ws", ["./..."]);
+      succeedsOnce([{ importPath: "example.com/a", dir: "/ws/a" }]);
+
+      await service.discoverPackage("/ws", "./a");
+
+      // The pattern matched one package, but the snapshot stands in for the
+      // whole tree — writing only the match would drop every other package
+      // from the next activation.
+      expect(snapshot.updated.at(-1)).toEqual({
+        workspaceDir: "/ws",
+        importPaths: ["example.com/a", "example.com/b"],
+      });
+    });
   });
 
   describe("when discovery fails transiently then recovers", () => {
     it("retries after 2s and updates cache on success", async () => {
-      mockExecFileAsync
-        .mockRejectedValueOnce(new Error("cannot find package"))
-        .mockResolvedValueOnce(
-          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-        );
+      failsOnce("cannot find package");
+      succeedsOnce([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
 
       const p = service.discover("/ws", ["./..."]);
       await vi.advanceTimersByTimeAsync(2_000);
@@ -144,11 +214,8 @@ describe("DiscoveryService", () => {
     });
 
     it("logs the transient failure at debug level", async () => {
-      mockExecFileAsync
-        .mockRejectedValueOnce(new Error("cannot find package"))
-        .mockResolvedValueOnce(
-          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-        );
+      failsOnce("cannot find package");
+      succeedsOnce([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
 
       const p = service.discover("/ws", ["./..."]);
       await vi.advanceTimersByTimeAsync(2_000);
@@ -160,11 +227,8 @@ describe("DiscoveryService", () => {
     });
 
     it("does not show a warning toast", async () => {
-      mockExecFileAsync
-        .mockRejectedValueOnce(new Error("cannot find package"))
-        .mockResolvedValueOnce(
-          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-        );
+      failsOnce("cannot find package");
+      succeedsOnce([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
 
       const p = service.discover("/ws", ["./..."]);
       await vi.advanceTimersByTimeAsync(2_000);
@@ -174,12 +238,9 @@ describe("DiscoveryService", () => {
     });
 
     it("recovers on third attempt after two failures", async () => {
-      mockExecFileAsync
-        .mockRejectedValueOnce(new Error("fail 1"))
-        .mockRejectedValueOnce(new Error("fail 2"))
-        .mockResolvedValueOnce(
-          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-        );
+      failsOnce("fail 1");
+      failsOnce("fail 2");
+      succeedsOnce([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
 
       const p = service.discover("/ws", ["./..."]);
       await vi.advanceTimersByTimeAsync(2_000);
@@ -194,7 +255,7 @@ describe("DiscoveryService", () => {
 
   describe("when all retry attempts fail", () => {
     beforeEach(async () => {
-      mockExecFileAsync.mockRejectedValue(new Error("persistent failure"));
+      failsAlways("persistent failure");
       const p = service.discover("/ws", ["./..."]);
       await vi.advanceTimersByTimeAsync(2_000);
       await vi.advanceTimersByTimeAsync(4_000);
@@ -212,10 +273,17 @@ describe("DiscoveryService", () => {
       expect(outputChannel.error).toHaveBeenCalledTimes(1);
     });
 
-    it("shows a warning toast to the user", () => {
+    it("shows a warning toast naming what went wrong", () => {
       expect(mockShowWarningMessage).toHaveBeenCalledTimes(1);
       expect(mockShowWarningMessage).toHaveBeenCalledWith(
-        expect.stringContaining("discovery failed"),
+        expect.stringContaining(
+          "discovery failed: exited with code 2: persistent failure",
+        ),
+        "Open Output",
+      );
+      // The toolchain advice belongs to a missing binary, not to this.
+      expect(mockShowWarningMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining("Ensure 'go' is installed"),
         "Open Output",
       );
     });
@@ -232,7 +300,7 @@ describe("DiscoveryService", () => {
 
   describe("when discovery recovers after a previous total failure", () => {
     it("re-enables the warning toast for future failures", async () => {
-      mockExecFileAsync.mockRejectedValue(new Error("fail"));
+      failsAlways("fail");
 
       const p1 = service.discover("/ws", ["./..."]);
       await vi.advanceTimersByTimeAsync(2_000);
@@ -240,12 +308,10 @@ describe("DiscoveryService", () => {
       await p1;
       expect(mockShowWarningMessage).toHaveBeenCalledTimes(1);
 
-      mockExecFileAsync.mockResolvedValueOnce(
-        successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-      );
+      succeedsOnce([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
       await service.discover("/ws", ["./..."]);
 
-      mockExecFileAsync.mockRejectedValue(new Error("fail again"));
+      failsAlways("fail again");
       const p3 = service.discover("/ws", ["./..."]);
       await vi.advanceTimersByTimeAsync(2_000);
       await vi.advanceTimersByTimeAsync(4_000);
@@ -255,13 +321,96 @@ describe("DiscoveryService", () => {
     });
   });
 
+  // The payload has no bound: it carries every behavior every suite declares.
+  // Reading it through a fixed buffer is what made a large repo undiscoverable,
+  // and the size below is past the 1 MiB such a read used to allow.
+  describe("when the CLI writes more than a buffered read would hold", () => {
+    it("keeps every package in a payload larger than 1 MiB", async () => {
+      const pkgs = Array.from({ length: 9_000 }, (_, i) => ({
+        importPath: `example.com/org/repo/internal/service/component${i}`,
+        dir: `/ws/internal/service/component${i}`,
+      }));
+      const json = discoverJson(pkgs);
+      expect(json.length).toBeGreaterThan(1024 * 1024);
+
+      const chunks: string[] = [];
+      for (let i = 0; i < json.length; i += 64 * 1024) {
+        chunks.push(json.slice(i, i + 64 * 1024));
+      }
+      script.once.push({ stdout: chunks });
+
+      await service.discover("/ws", ["./..."]);
+
+      expect(cache.packages).toHaveLength(9_000);
+      expect(outputChannel.error).not.toHaveBeenCalled();
+    });
+
+    // A read ends wherever the pipe filled, which can be mid-character. Decoding
+    // each chunk on its own would replace the halves with U+FFFD, and the id it
+    // corrupts is the one a run has to match to land on the same tree node.
+    it("decodes a character split across two reads", async () => {
+      const importPath = "example.com/café_日本語_🧪";
+      const json = discoverJson([{ importPath, dir: "/ws/unicode" }]);
+      const bytes = Buffer.from(json, "utf-8");
+      const split = Buffer.byteLength(json.slice(0, json.indexOf("日"))) + 1;
+      script.once.push({
+        stdout: [bytes.subarray(0, split), bytes.subarray(split)],
+      });
+
+      await service.discover("/ws", ["./..."]);
+
+      expect(cache.getPackage(importPath)).toBeDefined();
+    });
+  });
+
+  describe("when the CLI never finishes", () => {
+    it("kills it and reports the timeout", async () => {
+      script.always = { neverExits: true };
+
+      const p = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(120_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await p;
+
+      // One attempt. A timeout already spent the full budget, so retrying it
+      // twice more only delays the message the user is waiting for.
+      expect(script.calls).toHaveLength(1);
+      expect(mockKill).toHaveBeenCalledTimes(1);
+      expect(mockKill).toHaveBeenCalledWith("SIGTERM");
+      expect(outputChannel.error).toHaveBeenCalledWith(
+        expect.stringContaining("timed out after 120s"),
+      );
+    });
+  });
+
+  // A missing binary arrives as an error event, not an exit code. The cached
+  // path has to be dropped either way, or every later run repeats the mistake.
+  describe("when the go binary has moved", () => {
+    it("clears the cached binary path", async () => {
+      const enoent: NodeJS.ErrnoException = new Error("spawn go ENOENT");
+      enoent.code = "ENOENT";
+      script.always = { error: enoent };
+
+      const p = service.discover("/ws", ["./..."]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await p;
+
+      expect(mockClearBinaryCache).toHaveBeenCalledTimes(3);
+      expect(outputChannel.error).toHaveBeenCalledWith(
+        expect.stringContaining("ENOENT"),
+      );
+      expect(mockShowWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Ensure 'go' is installed"),
+        "Open Output",
+      );
+    });
+  });
+
   describe("when a newer discovery request is queued during retry", () => {
     it("aborts the retry loop", async () => {
-      mockExecFileAsync
-        .mockRejectedValueOnce(new Error("transient"))
-        .mockResolvedValue(
-          successResponse([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]),
-        );
+      failsOnce("transient");
+      succeedsAlways([{ importPath: "example.com/pkg", dir: "/ws/pkg" }]);
 
       const p1 = service.discover("/ws", ["./..."]);
       // While retrying, queue a second request for same workspace
@@ -276,5 +425,122 @@ describe("DiscoveryService", () => {
         expect.stringContaining("superseded by queued request"),
       );
     });
+  });
+});
+
+describe("DiscoveryCache broken packages", () => {
+  function suiteEntry(name: string) {
+    return {
+      name,
+      parallel: false,
+      focused: false,
+      excluded: false,
+      guarded: false,
+      file: `${name.toLowerCase()}_test.go`,
+      line: 1,
+      col: 1,
+      lifecycle: [],
+      fixtures: [],
+      methods: [],
+    };
+  }
+
+  it("keeps the last known suites when a package turns broken", () => {
+    const cache = new DiscoveryCache();
+    cache.update(
+      [
+        {
+          importPath: "example.com/pkg",
+          dir: "/ws/pkg",
+          suites: [suiteEntry("MySuite")],
+        },
+      ],
+      true,
+      "/ws",
+    );
+    cache.update(
+      [{ importPath: "example.com/pkg", dir: "", broken: true, suites: [] }],
+      false,
+      "/ws",
+    );
+
+    const pkg = cache.getPackage("example.com/pkg");
+    expect(pkg?.broken).toBe(true);
+    expect(pkg?.suites.map((s) => s.name)).toEqual(["MySuite"]);
+    // The empty incoming dir must not clobber the known location.
+    expect(pkg?.dir).toBe("/ws/pkg");
+    expect(cache.resolveFileToPackage("/ws/pkg/mysuite_test.go")).toBe(
+      "example.com/pkg",
+    );
+  });
+
+  it("drops the broken flag when the package builds again", () => {
+    const cache = new DiscoveryCache();
+    cache.update(
+      [
+        {
+          importPath: "example.com/pkg",
+          dir: "/ws/pkg",
+          broken: true,
+          suites: [],
+        },
+      ],
+      true,
+      "/ws",
+    );
+    cache.update(
+      [
+        {
+          importPath: "example.com/pkg",
+          dir: "/ws/pkg",
+          suites: [suiteEntry("MySuite")],
+        },
+      ],
+      false,
+      "/ws",
+    );
+
+    const pkg = cache.getPackage("example.com/pkg");
+    expect(pkg?.broken).toBeUndefined();
+    expect(pkg?.suites.map((s) => s.name)).toEqual(["MySuite"]);
+  });
+
+  it("stores a never-seen broken package as-is without indexing an empty dir", () => {
+    const cache = new DiscoveryCache();
+    cache.update(
+      [{ importPath: "example.com/gone", dir: "", broken: true, suites: [] }],
+      true,
+      "/ws",
+    );
+
+    expect(cache.getPackage("example.com/gone")?.broken).toBe(true);
+    expect(cache.resolveFileToPackage("")).toBeUndefined();
+  });
+
+  it("returns per-package warnings for the badge", () => {
+    const cache = new DiscoveryCache();
+    cache.update(
+      [
+        {
+          importPath: "example.com/pkg",
+          dir: "/ws/pkg",
+          broken: true,
+          suites: [],
+        },
+      ],
+      true,
+      "/ws",
+      [
+        {
+          importPath: "example.com/pkg",
+          message: "svc.go:4:17: cannot use 42",
+        },
+        { importPath: "example.com/other", message: "unrelated" },
+      ],
+    );
+
+    expect(cache.getWarnings("example.com/pkg").map((w) => w.message)).toEqual([
+      "svc.go:4:17: cannot use 42",
+    ]);
   });
 });
